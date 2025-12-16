@@ -13,9 +13,13 @@ def main():
 @main.command()
 @click.argument("command", nargs=-1, required=True)
 @click.option("--gpus", "-g", default=1, help="Number of GPUs")
-def run(command: tuple[str], gpus: int):
+@click.option("--dash", is_flag=True, help="Display the dashboard")
+def run(command: tuple[str], gpus: int, dash: bool):
     """Run a command or .py file"""
     cmd_str = command[0]
+    if dash:
+        import ravel.scheduler as sched
+        sched.DASHBOARD_MODE = True
 
     if cmd_str.endswith(".py"):
         full_path = os.path.abspath(cmd_str)
@@ -24,6 +28,10 @@ def run(command: tuple[str], gpus: int):
         cmd_list = shlex.split(cmd_str)
 
     add_job(cmd_list, gpus=gpus)
+
+    if dash:
+        from .dashboard import dashboard
+        dashboard()
 
     my_job_id = job_queue[-1]["id"] if job_queue else None
 
@@ -47,6 +55,12 @@ def queue():
 def version():
     from . import __version__
     click.echo(f"ravel-scheduler {__version__}")
+
+@main.command()
+def dash():
+    """Display the dashboard"""
+    from .dashboard import dashboard
+    dashboard()
 
 if __name__ == "__main__":
     main()
