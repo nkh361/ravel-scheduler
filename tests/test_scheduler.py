@@ -1,26 +1,29 @@
 import subprocess
-import ravel.scheduler as sched
-from ravel.scheduler import queue, running, add_job, _worker_once
+from ravel.daemon import run_once
+from ravel.store import add_job, clear_jobs_for_tests, get_job
 
-def test_job_gets_executed(monkeypatch):
+def test_job_gets_executed(monkeypatch, tmp_path):
     monkeypatch.setenv("RAVEL_NO_GPU", "1")
     monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
 
-    queue.clear()
-    running.clear()
+    clear_jobs_for_tests()
 
     calls = []
     def fake_run(*args, **kwargs):
         calls.append(args[0])
-        return type("Obj", (), {"returncode": 0})()
+        return type(
+            "Obj",
+            (),
+            {"returncode": 0, "stdout": "", "stderr": ""},
+        )()
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    monkeypatch.setattr("ravel.scheduler.time.sleep", lambda x: None)
 
-    add_job("echo hello ravel", gpus=1)
-    _worker_once()
+    job_id = add_job(["echo", "hello", "ravel"], gpus=1)
+    run_once()
 
     assert len(calls) == 1
-    assert "echo hello ravel" in calls[0]
-    assert len(queue) == 0
-    assert len(running) == 0
+    assert "echo" in calls[0]
+    job = get_job(job_id)
+    assert job["status"] == "done"

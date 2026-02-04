@@ -1,97 +1,33 @@
-import os
-import threading
-import time
-import uuid
-from datetime import datetime
-from typing import Dict, List
+from typing import List
 
-from .utils import console, get_free_gpus
+from .store import add_job as _add_job, list_jobs as _list_jobs
+from .utils import console
 
-queue: List[Dict] = []
-running: Dict[str, Dict] = {}
+DASHBOARD_MODE = False
 
-def add_job(command: str, gpus: int = 1):
-    job = {
-        "id": str(uuid.uuid4())[:8],
-        "command": command,
-        "gpus": gpus,
-        "status": "queued",
-        "created": datetime.now().isoformat(timespec="minutes")
-    }
-    queue.append(job)
-    console.print(f"[green]Job {job['id']} queued:[/] {command} (GPUs: {gpus})")
-    if os.getenv("RAVEL_TEST_MODE") != "1":
-        threading.Thread(target=_worker, daemon=True).start()
+def _format_command(command: List[str]) -> str:
+    return " ".join(command)
+
+
+def add_job(command: List[str], gpus: int = 1) -> str:
+    job_id = _add_job(command, gpus=gpus)
+    if not DASHBOARD_MODE:
+        console.print(
+            f"[green]Job {job_id} queued:[/] {_format_command(command)} (GPUs: {gpus})"
+        )
+    return job_id
 
 def list_jobs():
-    if not queue and not running:
+    queued = _list_jobs(["queued"])
+    running = _list_jobs(["running"])
+    if not queued and not running:
         console.print("[yellow]No jobs queued![/]")
         return
-    for job in queue:
-        console.print(f"[blue]QUEUED[/] {job['id']} :: {job['command']}")
-    for job in running.values():
-        console.print(f"[bold green]RUNNING[/] {job['id']} :: {job['command']}")
-
-def _run_one_job(job: Dict):
-    """Shared logic for real worker and test worker"""
-    free = job["gpus_assigned"]
-    env = os.environ.copy()
-    env["NVIDIA_VISIBLE_DEVICES"] = ",".join(map(str, job.get("gpus_assigned", [])))
-
-    console.print(f"[bold magenta]Starting[/] {job['id']} → GPUs {free}")
-
-    import subprocess
-    try:
-        result = subprocess.run(
-            job["command"],
-            shell=False,
-            capture_output=True,
-            text=True,
-            env=env
+    for job in queued:
+        console.print(
+            f"[blue]QUEUED[/] {job['id']} :: {_format_command(job['command'])}"
         )
-
-        if result.stdout:
-            console.print(result.stdout.strip())
-        if result.stderr:
-            console.print(f"[red]{result.stderr.strip()}[/]")
-
-        status = "done" if result.returncode == 0 else "failed"
-
-    except Exception as e:
-        console.print(f"[red]Crash:[/] {e}")
-        status = "failed"
-
-    console.print(f"[bold green]Finished[/] {job['id']} — {status}")
-    running.pop(job["id"], None)
-
-def _worker():
-    while True:
-        if not queue:
-            time.sleep(2)
-            continue
-        job = queue[0]
-        free = get_free_gpus(job["gpus"])
-        if len(free) < job["gpus"]:
-            time.sleep(5)
-            continue
-
-        job = queue.pop(0)
-        job["status"] = "running"
-        job["gpus_assigned"] = free
-        running[job["id"]] = job
-        _run_one_job(job)
-
-def _worker_once():
-    """Run exactly one iteration — only used in tests"""
-    if not queue:
-        return
-    job = queue[0]
-    free = get_free_gpus(job["gpus"])
-    if len(free) < job["gpus"]:
-        return
-
-    job = queue.pop(0)
-    job["status"] = "running"
-    job["gpus_assigned"] = free
-    running[job["id"]] = job
-    _run_one_job(job)
+    for job in running:
+        console.print(
+            f"[bold green]RUNNING[/] {job['id']} :: {_format_command(job['command'])}"
+        )
