@@ -1,9 +1,12 @@
+import os
 import shlex
+import time
 
 import click
-import time
-import os
-from .scheduler import add_job, list_jobs, running, queue as job_queue
+
+from .daemon import daemon_running, daemon_status, start_daemon, stop_daemon
+from .scheduler import add_job, list_jobs
+from .store import get_job
 from .utils import console
 
 @click.group()
@@ -27,21 +30,16 @@ def run(command: tuple[str], gpus: int, dash: bool):
     else:
         cmd_list = shlex.split(cmd_str)
 
-    add_job(cmd_list, gpus=gpus)
+    job_id = add_job(cmd_list, gpus=gpus)
+
+    if not daemon_running():
+        start_daemon()
 
     if dash:
         from .dashboard import dashboard
         dashboard()
 
-    my_job_id = job_queue[-1]["id"] if job_queue else None
-
-    while my_job_id:
-        if any(j["id"] == my_job_id for j in job_queue):
-            time.sleep(0.3)
-        elif my_job_id in running:
-            time.sleep(0.3)
-        else:
-            break
+    _wait_for_job(job_id)
 
     console.print("[bold cyan]All done! Exiting.[/]")
 
@@ -61,6 +59,47 @@ def dash():
     """Display the dashboard"""
     from .dashboard import dashboard
     dashboard()
+
+
+@main.group()
+def daemon():
+    """Manage the ravel daemon"""
+    pass
+
+
+@daemon.command("start")
+def daemon_start():
+    """Start the daemon"""
+    start_daemon()
+
+
+@daemon.command("stop")
+def daemon_stop():
+    """Stop the daemon"""
+    stop_daemon()
+
+
+@daemon.command("status")
+def daemon_show_status():
+    """Show daemon status"""
+    console.print(f"[bold]Daemon:[/] {daemon_status()}")
+
+
+def _wait_for_job(job_id: str) -> None:
+    while True:
+        job = get_job(job_id)
+        if not job:
+            time.sleep(0.3)
+            continue
+        if job["status"] in {"done", "failed"}:
+            if job["stdout"]:
+                console.print(job["stdout"].strip())
+            if job["stderr"]:
+                console.print(f"[red]{job['stderr'].strip()}[/]")
+            status = job["status"]
+            console.print(f"[bold green]Finished[/] {job_id} — {status}")
+            return
+        time.sleep(0.3)
 
 if __name__ == "__main__":
     main()

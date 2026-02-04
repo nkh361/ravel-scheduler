@@ -1,13 +1,16 @@
 import time
 from tqdm import tqdm
-from .scheduler import queue, running
+from .store import list_jobs
 
 def dashboard(refresh=0.5):
     """Display the dashboard"""
     bars = {}
     try:
         while True:
-            if not queue and not running:
+            running = {job["id"]: job for job in list_jobs(["running"])}
+            queued = list_jobs(["queued"])
+
+            if not queued and not running:
                 for bar in bars.values():
                     bar.n = bar.total
                     bar.refresh()
@@ -24,7 +27,7 @@ def dashboard(refresh=0.5):
                         leave=True
                     )
 
-            for job_id, bar in bars.items():
+            for job_id, bar in list(bars.items()):
                 if job_id in running and bar.n < 99:
                     bar.update(1)
 
