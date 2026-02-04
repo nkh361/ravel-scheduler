@@ -17,7 +17,12 @@ def main():
 @click.argument("command", nargs=-1, required=True)
 @click.option("--gpus", "-g", default=1, help="Number of GPUs")
 @click.option("--dash", is_flag=True, help="Display the dashboard")
-def run(command: tuple[str], gpus: int, dash: bool):
+@click.option(
+    "--no-wait",
+    is_flag=True,
+    help="Enqueue the job and exit without waiting",
+)
+def run(command: tuple[str], gpus: int, dash: bool, no_wait: bool):
     """Run a command or .py file"""
     cmd_str = command[0]
     if dash:
@@ -38,6 +43,10 @@ def run(command: tuple[str], gpus: int, dash: bool):
     if dash:
         from .dashboard import dashboard
         dashboard()
+
+    if no_wait:
+        console.print(f"[dim]Enqueued {job_id}. Exiting (no-wait).[/]")
+        return
 
     _wait_for_job(job_id)
 
