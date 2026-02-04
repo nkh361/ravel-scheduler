@@ -11,6 +11,7 @@ GPU scheduler with a shared, cross-terminal job queue and daemon.
 ## Usage
 1. Run a job (auto-starts the daemon if needed):
    - `ravel run "python3 path/to/script.py"`
+   - `ravel run --no-wait "python3 path/to/script.py"` (enqueue and exit immediately)
 2. List queued/running jobs:
    - `ravel queue`
 3. Watch jobs live from any terminal:
