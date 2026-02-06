@@ -134,14 +134,20 @@ def logs(limit: int, only_failed: bool, only_passed: bool, status_filter: Option
 
     console.print(f"[bold]Last {len(jobs)} jobs:[/]")
     for job in jobs:
-        status = job["status"]
+        raw_status = job["status"]
+        if raw_status == "done":
+            status = "[bold green]done[/]"
+        elif raw_status == "failed":
+            status = "[bold red]failed[/]"
+        else:
+            status = raw_status
         cmd = " ".join(job["command"])
         created = job.get("created_at") or "-"
         finished = job.get("finished_at") or "-"
         rc = job.get("returncode")
         rc_text = "-" if rc is None else str(rc)
         console.print(
-            f"[cyan]{job['id']}[/] {status} rc={rc_text} "
+            f"{job['id']} {status} rc={rc_text} "
             f"created={created} finished={finished} :: {cmd}"
         )
 
