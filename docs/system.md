@@ -28,10 +28,16 @@ Key fields:
 1. `id` (string): Job ID.
 2. `command` (json): Command array, stored as JSON.
 3. `gpus` (int): Number of GPUs requested.
-4. `status` (string): `queued`, `running`, `done`, `failed`.
-5. `created_at`, `started_at`, `finished_at` (timestamps).
-6. `gpus_assigned` (json): List of GPU indices assigned.
-7. `returncode`, `stdout`, `stderr`.
+4. `priority` (int): Higher runs first.
+5. `memory_tag` (string): Used with `RAVEL_MEMORY_LIMITS`.
+6. `status` (string): `queued`, `running`, `done`, `failed`, `blocked`.
+7. `created_at`, `started_at`, `finished_at` (timestamps).
+8. `gpus_assigned` (json): List of GPU indices assigned.
+9. `returncode`, `stdout`, `stderr`.
+
+Table: `job_deps`
+1. `job_id` (string): The dependent job.
+2. `depends_on` (string): A prerequisite job ID.
 
 ## GPU Scheduling
 `ravel/utils.py` contains `get_free_gpus()` which uses `nvidia-smi` to find GPUs with < 20% utilization. If `RAVEL_NO_GPU=1`, it returns mock GPU availability.

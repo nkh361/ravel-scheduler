@@ -14,9 +14,15 @@ This guide explains how to install and use Ravel from the CLI, including common 
    - `ravel run "python3 path/to/script.py"`
 2. Enqueue without waiting for completion:
    - `ravel run --no-wait "python3 path/to/script.py"`
-3. List queued and running jobs:
+3. Priority scheduling (higher runs first):
+   - `ravel run --priority 10 "python3 path/to/script.py"`
+4. DAG dependencies:
+   - `ravel run --after <job_id> "python3 path/to/script.py"`
+5. Memory tags for resource limits:
+   - `ravel run --memory-tag large "python3 path/to/script.py"`
+6. List queued and running jobs:
    - `ravel queue`
-4. Live dashboard (watch running jobs):
+7. Live dashboard (watch running jobs):
    - `ravel dash`
 
 ## Daemon Controls
@@ -41,6 +47,10 @@ Ravel is configured by environment variables.
    - SQLite database path (defaults to `~/.ravel/ravel.db`).
 3. `RAVEL_NO_GPU`
    - If `1`, bypass GPU checks (useful on CPU-only machines).
+4. `RAVEL_MAX_WORKERS`
+   - Max concurrent jobs.
+5. `RAVEL_MEMORY_LIMITS`
+   - Comma-delimited limits for `--memory-tag` (example: `large=1,medium=2`).
 
 ## Troubleshooting
 1. Daemon says running but jobs do not start:
