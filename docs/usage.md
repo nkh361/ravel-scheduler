@@ -29,6 +29,13 @@ This guide explains how to install and use Ravel from the CLI, including common 
    - `ravel logs --failed`
    - `ravel logs --passed`
    - `ravel logs --status queued,running,blocked`
+9. Submit a batch file (one command per line, `#` for comments):
+   - `ravel submit jobs.txt --no-wait`
+   - Each line is executed as-is via `/bin/bash -lc` (no re-quoting).
+   - Optional metadata prefix: `name=... priority=... gpus=... memory=... after=... -- <command>`
+   - `after=` can reference `name=` entries or existing job IDs.
+   - Relative paths resolve from the directory containing the batch file.
+   - Heredocs are supported (lines are grouped until the heredoc terminator).
 
 ## Daemon Controls
 1. Start the daemon:

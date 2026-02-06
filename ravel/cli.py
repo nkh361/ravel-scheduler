@@ -86,6 +86,151 @@ def queue():
     list_jobs()
 
 @main.command()
+@click.argument("file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--gpus", "-g", default=1, help="Number of GPUs")
+@click.option("--priority", "-p", default=0, help="Higher runs first")
+@click.option("--memory-tag", "--mem", default=None, help="Memory tag for limits")
+@click.option("--no-wait", is_flag=True, help="Enqueue jobs and exit immediately")
+def submit(file: str, gpus: int, priority: int, memory_tag: Optional[str], no_wait: bool):
+    """Submit a batch of jobs from a text file"""
+    from .store import add_dependencies
+
+    with open(file, "r") as handle:
+        lines = handle.read().splitlines()
+
+    jobs = []
+    idx = 0
+    while idx < len(lines):
+        raw = lines[idx]
+        line = raw.strip()
+        if not line:
+            idx += 1
+            continue
+        if line.startswith("#"):
+            idx += 1
+            continue
+
+        command_lines = [raw]
+        heredoc_tag = _detect_heredoc_tag(raw)
+        if heredoc_tag:
+            idx += 1
+            while idx < len(lines):
+                command_lines.append(lines[idx])
+                if lines[idx].strip() == heredoc_tag:
+                    break
+                idx += 1
+        jobs.append("\n".join(command_lines))
+        idx += 1
+
+    if not jobs:
+        console.print("[yellow]No jobs found in file.[/]")
+        return
+
+    if not daemon_running():
+        start_daemon()
+
+    parsed_jobs = [_parse_submit_line(raw, gpus, priority, memory_tag) for raw in jobs]
+
+    job_ids = []
+    name_to_id: dict[str, str] = {}
+    submit_cwd = os.path.abspath(os.path.dirname(file))
+    for entry in parsed_jobs:
+        cmd_list = ["/bin/bash", "-lc", entry["command"]]
+        job_id = add_job(
+            cmd_list,
+            gpus=entry["gpus"],
+            priority=entry["priority"],
+            memory_tag=entry["memory_tag"],
+            cwd=submit_cwd,
+        )
+        job_ids.append(job_id)
+        if entry["name"]:
+            name_to_id[entry["name"]] = job_id
+
+    for entry, job_id in zip(parsed_jobs, job_ids):
+        depends_on = []
+        for dep in entry["after"]:
+            depends_on.append(name_to_id.get(dep, dep))
+        add_dependencies(job_id, depends_on)
+
+    console.print(f"[green]Queued {len(job_ids)} jobs.[/]")
+    if no_wait:
+        return
+
+    for job_id in job_ids:
+        _wait_for_job(job_id)
+
+
+def _parse_submit_line(
+    raw: str,
+    default_gpus: int,
+    default_priority: int,
+    default_memory_tag: Optional[str],
+) -> dict:
+    if " -- " in raw:
+        meta, command = raw.split(" -- ", 1)
+        meta = meta.strip()
+    else:
+        meta = ""
+        command = raw
+
+    gpus = default_gpus
+    priority = default_priority
+    memory_tag = default_memory_tag
+    name = None
+    after: list[str] = []
+
+    if meta:
+        parts = [p for p in meta.split() if p]
+        for part in parts:
+            if "=" not in part:
+                continue
+            key, value = part.split("=", 1)
+            key = key.strip().lower()
+            value = value.strip()
+            if key == "gpus":
+                try:
+                    gpus = int(value)
+                except ValueError:
+                    pass
+            elif key == "priority":
+                try:
+                    priority = int(value)
+                except ValueError:
+                    pass
+            elif key in {"memory", "mem", "memory_tag"}:
+                memory_tag = value or None
+            elif key == "name":
+                name = value or None
+            elif key in {"after", "depends"}:
+                after = [v.strip() for v in value.split(",") if v.strip()]
+
+    return {
+        "command": command,
+        "gpus": gpus,
+        "priority": priority,
+        "memory_tag": memory_tag,
+        "name": name,
+        "after": after,
+    }
+
+
+def _detect_heredoc_tag(line: str) -> Optional[str]:
+    if "<<'" in line:
+        start = line.split("<<'", 1)[1]
+        if "'" in start:
+            return start.split("'", 1)[0]
+    if "<<\"" in line:
+        start = line.split("<<\"", 1)[1]
+        if "\"" in start:
+            return start.split("\"", 1)[0]
+    if "<<" in line:
+        start = line.split("<<", 1)[1].strip()
+        if start:
+            return start.split()[0]
+    return None
+
+@main.command()
 def version():
     from . import __version__
     click.echo(f"ravel-scheduler {__version__}")
