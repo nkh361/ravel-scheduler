@@ -96,6 +96,55 @@ def dash():
     from .dashboard import dashboard
     dashboard()
 
+@main.command()
+@click.option("--limit", "-l", default=10, help="Number of recent jobs to show")
+@click.option("--failed", "only_failed", is_flag=True, help="Show only failed jobs")
+@click.option("--passed", "only_passed", is_flag=True, help="Show only passed jobs")
+@click.option(
+    "--status",
+    "status_filter",
+    default=None,
+    help="Filter by status: queued,running,done,failed,blocked",
+)
+def logs(limit: int, only_failed: bool, only_passed: bool, status_filter: Optional[str]):
+    """Show recent jobs with summaries"""
+    from .store import list_recent_jobs
+
+    if only_failed and only_passed:
+        console.print("[red]Choose only one of --failed or --passed[/]")
+        return
+
+    if status_filter and (only_failed or only_passed):
+        console.print("[red]Choose either --status or --failed/--passed[/]")
+        return
+
+    statuses = None
+    if only_failed:
+        statuses = ["failed"]
+    elif only_passed:
+        statuses = ["done"]
+    elif status_filter:
+        statuses = [s.strip() for s in status_filter.split(",") if s.strip()]
+
+    limit = max(1, limit)
+    jobs = list_recent_jobs(limit, statuses=statuses)
+    if not jobs:
+        console.print("[yellow]No jobs found.[/]")
+        return
+
+    console.print(f"[bold]Last {len(jobs)} jobs:[/]")
+    for job in jobs:
+        status = job["status"]
+        cmd = " ".join(job["command"])
+        created = job.get("created_at") or "-"
+        finished = job.get("finished_at") or "-"
+        rc = job.get("returncode")
+        rc_text = "-" if rc is None else str(rc)
+        console.print(
+            f"[cyan]{job['id']}[/] {status} rc={rc_text} "
+            f"created={created} finished={finished} :: {cmd}"
+        )
+
 
 @main.group()
 def daemon():
