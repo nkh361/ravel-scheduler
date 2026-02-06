@@ -15,14 +15,11 @@ def _state_dir() -> str:
         os.path.join(os.path.expanduser("~"), ".ravel"),
     )
 
-
 def _pid_path() -> str:
     return os.path.join(_state_dir(), "daemon.pid")
 
-
 def _log_path() -> str:
     return os.path.join(_state_dir(), "daemon.log")
-
 
 def daemon_running() -> bool:
     pid = _read_pid()
@@ -34,7 +31,6 @@ def daemon_running() -> bool:
     except OSError:
         _clear_pid()
         return False
-
 
 def start_daemon() -> None:
     os.makedirs(_state_dir(), exist_ok=True)
@@ -52,7 +48,6 @@ def start_daemon() -> None:
     _write_pid(proc.pid)
     console.print(f"[green]Daemon started[/] (pid {proc.pid})")
 
-
 def stop_daemon() -> None:
     pid = _read_pid()
     if not pid:
@@ -65,12 +60,10 @@ def stop_daemon() -> None:
         console.print("[yellow]Daemon already stopped[/]")
     _clear_pid()
 
-
 def daemon_status() -> str:
     if daemon_running():
         return "running"
     return "stopped"
-
 
 def run_daemon_forever(poll_interval: float = 1.0) -> None:
     console.print(f"[dim]ravel daemon using db at {db_path()}[/]")
@@ -78,7 +71,6 @@ def run_daemon_forever(poll_interval: float = 1.0) -> None:
         did_work = run_once()
         if not did_work:
             time.sleep(poll_interval)
-
 
 def run_once() -> bool:
     job = peek_next_queued_job()
@@ -94,7 +86,6 @@ def run_once() -> bool:
 
     _run_job(job_id=job["id"], gpus_assigned=free)
     return True
-
 
 def _run_job(job_id: str, gpus_assigned: list[int]) -> None:
     job = get_job(job_id)
@@ -130,11 +121,9 @@ def _run_job(job_id: str, gpus_assigned: list[int]) -> None:
         stderr=stderr,
     )
 
-
 def _write_pid(pid: int) -> None:
     with open(_pid_path(), "w") as handle:
         handle.write(str(pid))
-
 
 def _read_pid() -> Optional[int]:
     try:
@@ -146,17 +135,14 @@ def _read_pid() -> Optional[int]:
     except ValueError:
         return None
 
-
 def _clear_pid() -> None:
     try:
         os.remove(_pid_path())
     except FileNotFoundError:
         pass
 
-
 def main() -> None:
     run_daemon_forever()
-
 
 if __name__ == "__main__":
     main()
