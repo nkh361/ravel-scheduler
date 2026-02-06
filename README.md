@@ -1,5 +1,5 @@
 # ravel
-GPU scheduler with a shared, cross-terminal job queue and daemon.
+Fast, local GPU scheduler with a shared, cross-terminal job queue and daemon.
 
 ## Install
 1. Create and activate a virtual environment (recommended):
@@ -19,6 +19,11 @@ GPU scheduler with a shared, cross-terminal job queue and daemon.
    - `ravel queue`
 3. Watch jobs live from any terminal:
    - `ravel dash`
+4. Show recent job summaries:
+   - `ravel logs --limit 10`
+   - `ravel logs --failed`
+   - `ravel logs --passed`
+   - `ravel logs --status queued,running,blocked`
 4. Manage the daemon:
    - `ravel daemon status`
    - `ravel daemon stop`

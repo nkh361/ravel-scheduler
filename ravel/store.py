@@ -141,6 +141,30 @@ def list_jobs(statuses: Optional[Iterable[str]] = None) -> List[Dict]:
             ).fetchall()
     return [_row_to_job(row) for row in rows]
 
+def list_recent_jobs(limit: int = 10, statuses: Optional[Iterable[str]] = None) -> List[Dict]:
+    with _connect() as conn:
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            rows = conn.execute(
+                f"""
+                SELECT * FROM jobs
+                WHERE status IN ({placeholders})
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT ?
+                """,
+                [*list(statuses), limit],
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM jobs
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+    return [_row_to_job(row) for row in rows]
+
 def list_ready_jobs(limit: Optional[int] = None) -> List[Dict]:
     with _connect() as conn:
         limit_sql = f"LIMIT {int(limit)}" if limit else ""
