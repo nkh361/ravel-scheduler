@@ -3,9 +3,18 @@ import signal
 import subprocess
 import sys
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Optional
 
-from .store import db_path, get_job, peek_next_queued_job, set_job_finished, try_claim_job
+from .store import (
+    db_path,
+    get_job,
+    list_jobs,
+    list_ready_jobs,
+    mark_blocked_jobs_due_to_failed_deps,
+    set_job_finished,
+    try_claim_job,
+)
 from .utils import console, get_free_gpus
 
 
@@ -42,6 +51,7 @@ def start_daemon() -> None:
         [sys.executable, "-m", "ravel.daemon"],
         stdout=log,
         stderr=log,
+        stdin=subprocess.DEVNULL,
         start_new_session=True,
         close_fds=True,
     )
@@ -66,26 +76,64 @@ def daemon_status() -> str:
     return "stopped"
 
 def run_daemon_forever(poll_interval: float = 1.0) -> None:
+    _ensure_stdio()
     console.print(f"[dim]ravel daemon using db at {db_path()}[/]")
+    max_workers = _get_max_workers()
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    active: set[Future] = set()
     while True:
-        did_work = run_once()
+        active = {f for f in active if not f.done()}
+        did_work = run_once(executor=executor, active_futures=active)
         if not did_work:
             time.sleep(poll_interval)
 
-def run_once() -> bool:
-    job = peek_next_queued_job()
-    if not job:
+def run_once(
+    executor: Optional[ThreadPoolExecutor] = None,
+    active_futures: Optional[set[Future]] = None,
+    inline: bool = False,
+) -> bool:
+    max_workers = _get_max_workers()
+    active_futures = active_futures or set()
+    if executor is None and not inline:
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+
+    mark_blocked_jobs_due_to_failed_deps()
+
+    did_work = False
+    running = list_jobs(["running"])
+    running_count = len(running)
+    slots = max(0, max_workers - running_count - len(active_futures))
+    if slots <= 0:
         return False
 
-    free = get_free_gpus(job["gpus"])
-    if len(free) < job["gpus"]:
-        return False
+    memory_limits = _parse_memory_limits(os.getenv("RAVEL_MEMORY_LIMITS", ""))
+    running_by_tag = _count_running_by_memory_tag(running)
+    reserved_gpus = _reserved_gpus(running)
 
-    if not try_claim_job(job["id"], free):
-        return False
+    for job in list_ready_jobs(limit=slots * 2 or 1):
+        if slots <= 0:
+            break
+        if not _memory_tag_available(job.get("memory_tag"), memory_limits, running_by_tag):
+            continue
+        free = get_free_gpus(job["gpus"], reserved=reserved_gpus)
+        if len(free) < job["gpus"]:
+            continue
+        if not try_claim_job(job["id"], free):
+            continue
 
-    _run_job(job_id=job["id"], gpus_assigned=free)
-    return True
+        reserved_gpus.update(free)
+        if job.get("memory_tag"):
+            running_by_tag[job["memory_tag"]] = running_by_tag.get(job["memory_tag"], 0) + 1
+
+        if executor and not inline:
+            future = executor.submit(_run_job, job_id=job["id"], gpus_assigned=free)
+            active_futures.add(future)
+        else:
+            _run_job(job_id=job["id"], gpus_assigned=free)
+        did_work = True
+        slots -= 1
+
+    return did_work
 
 def _run_job(job_id: str, gpus_assigned: list[int]) -> None:
     job = get_job(job_id)
@@ -99,8 +147,10 @@ def _run_job(job_id: str, gpus_assigned: list[int]) -> None:
         result = subprocess.run(
             job["command"],
             shell=False,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
+            cwd=job.get("cwd") or None,
             env=env,
         )
         status = "done" if result.returncode == 0 else "failed"
@@ -120,6 +170,65 @@ def _run_job(job_id: str, gpus_assigned: list[int]) -> None:
         stdout=stdout,
         stderr=stderr,
     )
+
+def _ensure_stdio() -> None:
+    for fd, mode in ((0, os.O_RDONLY), (1, os.O_WRONLY), (2, os.O_WRONLY)):
+        try:
+            os.fstat(fd)
+        except OSError:
+            devnull = os.open(os.devnull, mode)
+            os.dup2(devnull, fd)
+            os.close(devnull)
+
+def _get_max_workers() -> int:
+    try:
+        value = int(os.getenv("RAVEL_MAX_WORKERS", "1"))
+        return max(1, value)
+    except ValueError:
+        return 1
+
+def _parse_memory_limits(value: str) -> dict[str, int]:
+    limits: dict[str, int] = {}
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            continue
+        key, raw = part.split("=", 1)
+        key = key.strip()
+        try:
+            limits[key] = int(raw.strip())
+        except ValueError:
+            continue
+    return limits
+
+def _count_running_by_memory_tag(running: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for job in running:
+        tag = job.get("memory_tag")
+        if not tag:
+            continue
+        counts[tag] = counts.get(tag, 0) + 1
+    return counts
+
+def _memory_tag_available(
+    tag: Optional[str],
+    limits: dict[str, int],
+    counts: dict[str, int],
+) -> bool:
+    if not tag:
+        return True
+    if tag not in limits:
+        return True
+    return counts.get(tag, 0) < limits[tag]
+
+def _reserved_gpus(running: list[dict]) -> set[int]:
+    reserved: set[int] = set()
+    for job in running:
+        for gpu in job.get("gpus_assigned", []):
+            reserved.add(gpu)
+    return reserved
 
 def _write_pid(pid: int) -> None:
     with open(_pid_path(), "w") as handle:

@@ -1,6 +1,7 @@
 import os
 import shlex
 import time
+from typing import Optional
 
 import click
 
@@ -16,13 +17,28 @@ def main():
 @main.command()
 @click.argument("command", nargs=-1, required=True)
 @click.option("--gpus", "-g", default=1, help="Number of GPUs")
+@click.option("--priority", "-p", default=0, help="Higher runs first")
+@click.option(
+    "--after",
+    multiple=True,
+    help="Job ID(s) that must finish before this runs (repeatable)",
+)
+@click.option("--memory-tag", "--mem", default=None, help="Memory tag for limits")
 @click.option("--dash", is_flag=True, help="Display the dashboard")
 @click.option(
     "--no-wait",
     is_flag=True,
     help="Enqueue the job and exit without waiting",
 )
-def run(command: tuple[str], gpus: int, dash: bool, no_wait: bool):
+def run(
+    command: tuple[str],
+    gpus: int,
+    priority: int,
+    after: tuple[str],
+    memory_tag: Optional[str],
+    dash: bool,
+    no_wait: bool,
+):
     """Run a command or .py file"""
     cmd_str = command[0]
     if dash:
@@ -34,8 +50,19 @@ def run(command: tuple[str], gpus: int, dash: bool, no_wait: bool):
         cmd_list = ["python3", full_path]
     else:
         cmd_list = shlex.split(cmd_str)
+        if len(cmd_list) >= 2 and cmd_list[1].endswith(".py"):
+            if not os.path.isabs(cmd_list[1]):
+                cmd_list[1] = os.path.abspath(cmd_list[1])
 
-    job_id = add_job(cmd_list, gpus=gpus)
+    depends_on = list(after) if after else None
+    job_id = add_job(
+        cmd_list,
+        gpus=gpus,
+        priority=priority,
+        depends_on=depends_on,
+        memory_tag=memory_tag,
+        cwd=os.getcwd(),
+    )
 
     if not daemon_running():
         start_daemon()

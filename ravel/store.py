@@ -33,6 +33,13 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    try:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    except sqlite3.OperationalError:
+        pass
+
+
 def _init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
@@ -40,6 +47,9 @@ def _init_db(conn: sqlite3.Connection) -> None:
             id TEXT PRIMARY KEY,
             command TEXT NOT NULL,
             gpus INTEGER NOT NULL,
+            priority INTEGER NOT NULL DEFAULT 0,
+            memory_tag TEXT,
+            cwd TEXT,
             status TEXT NOT NULL,
             created_at TEXT NOT NULL,
             started_at TEXT,
@@ -49,24 +59,61 @@ def _init_db(conn: sqlite3.Connection) -> None:
             stdout TEXT,
             stderr TEXT
         );
+        CREATE TABLE IF NOT EXISTS job_deps (
+            job_id TEXT NOT NULL,
+            depends_on TEXT NOT NULL
+        );
+        """
+    )
+    _ensure_column(conn, "jobs", "priority", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "jobs", "memory_tag", "TEXT")
+    _ensure_column(conn, "jobs", "cwd", "TEXT")
+    conn.executescript(
+        """
         CREATE INDEX IF NOT EXISTS idx_jobs_status_created
             ON jobs(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_jobs_priority_created
+            ON jobs(priority, created_at);
+        CREATE INDEX IF NOT EXISTS idx_job_deps_job
+            ON job_deps(job_id);
+        CREATE INDEX IF NOT EXISTS idx_job_deps_depends
+            ON job_deps(depends_on);
         """
     )
 
-
-def add_job(command: List[str], gpus: int = 1) -> str:
+def add_job(
+    command: List[str],
+    gpus: int = 1,
+    priority: int = 0,
+    depends_on: Optional[List[str]] = None,
+    memory_tag: Optional[str] = None,
+    cwd: Optional[str] = None,
+) -> str:
     job_id = str(uuid.uuid4())[:8]
-    created_at = datetime.now().isoformat(timespec="minutes")
+    created_at = datetime.now().isoformat(timespec="seconds")
     with _connect() as conn:
         conn.execute(
             """
             INSERT INTO jobs (
-                id, command, gpus, status, created_at
-            ) VALUES (?, ?, ?, ?, ?)
+                id, command, gpus, priority, memory_tag, cwd, status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (job_id, json.dumps(command), gpus, "queued", created_at),
+            (
+                job_id,
+                json.dumps(command),
+                gpus,
+                priority,
+                memory_tag,
+                cwd,
+                "queued",
+                created_at,
+            ),
         )
+        if depends_on:
+            conn.executemany(
+                "INSERT INTO job_deps (job_id, depends_on) VALUES (?, ?)",
+                [(job_id, dep) for dep in depends_on],
+            )
     return job_id
 
 
@@ -94,18 +141,45 @@ def list_jobs(statuses: Optional[Iterable[str]] = None) -> List[Dict]:
             ).fetchall()
     return [_row_to_job(row) for row in rows]
 
-
-def peek_next_queued_job() -> Optional[Dict]:
+def list_ready_jobs(limit: Optional[int] = None) -> List[Dict]:
     with _connect() as conn:
-        row = conn.execute(
+        limit_sql = f"LIMIT {int(limit)}" if limit else ""
+        rows = conn.execute(
             """
-            SELECT * FROM jobs
+            SELECT j.*
+            FROM jobs j
+            WHERE j.status = 'queued'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM job_deps d
+                JOIN jobs dep ON dep.id = d.depends_on
+                WHERE d.job_id = j.id
+                  AND dep.status != 'done'
+              )
+            ORDER BY j.priority DESC, j.created_at ASC, j.rowid ASC
+            """
+            + limit_sql
+        ).fetchall()
+    return [_row_to_job(row) for row in rows]
+
+
+def mark_blocked_jobs_due_to_failed_deps() -> int:
+    with _connect() as conn:
+        result = conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'blocked'
             WHERE status = 'queued'
-            ORDER BY created_at
-            LIMIT 1
+              AND EXISTS (
+                SELECT 1
+                FROM job_deps d
+                JOIN jobs dep ON dep.id = d.depends_on
+                WHERE d.job_id = jobs.id
+                  AND dep.status IN ('failed', 'blocked')
+              )
             """
-        ).fetchone()
-    return _row_to_job(row) if row else None
+        )
+    return result.rowcount
 
 
 def try_claim_job(job_id: str, gpus_assigned: List[int]) -> bool:
@@ -120,7 +194,7 @@ def try_claim_job(job_id: str, gpus_assigned: List[int]) -> bool:
             WHERE id = ? AND status = 'queued'
             """,
             (
-                datetime.now().isoformat(timespec="minutes"),
+                datetime.now().isoformat(timespec="seconds"),
                 json.dumps(gpus_assigned),
                 job_id,
             ),
@@ -144,7 +218,7 @@ def set_job_finished(
     stdout: str,
     stderr: str,
 ) -> None:
-    finished_at = datetime.now().isoformat(timespec="minutes")
+    finished_at = datetime.now().isoformat(timespec="seconds")
     with _connect() as conn:
         conn.execute(
             """
@@ -165,6 +239,7 @@ def clear_jobs_for_tests() -> None:
         console.print("[red]Refusing to clear jobs outside test mode[/]")
         return
     with _connect() as conn:
+        conn.execute("DELETE FROM job_deps")
         conn.execute("DELETE FROM jobs")
 
 
