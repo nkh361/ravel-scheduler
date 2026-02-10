@@ -117,6 +117,16 @@ def add_job(
     return job_id
 
 
+def add_dependencies(job_id: str, depends_on: List[str]) -> None:
+    if not depends_on:
+        return
+    with _connect() as conn:
+        conn.executemany(
+            "INSERT INTO job_deps (job_id, depends_on) VALUES (?, ?)",
+            [(job_id, dep) for dep in depends_on],
+        )
+
+
 def get_job(job_id: str) -> Optional[Dict]:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
