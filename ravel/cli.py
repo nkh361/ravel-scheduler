@@ -98,29 +98,13 @@ def submit(file: str, gpus: int, priority: int, memory_tag: Optional[str], no_wa
     with open(file, "r") as handle:
         lines = handle.read().splitlines()
 
-    jobs = []
-    idx = 0
-    while idx < len(lines):
-        raw = lines[idx]
-        line = raw.strip()
-        if not line:
-            idx += 1
-            continue
-        if line.startswith("#"):
-            idx += 1
-            continue
+    defaults = {
+        "gpus": gpus,
+        "priority": priority,
+        "memory_tag": memory_tag,
+    }
 
-        command_lines = [raw]
-        heredoc_tag = _detect_heredoc_tag(raw)
-        if heredoc_tag:
-            idx += 1
-            while idx < len(lines):
-                command_lines.append(lines[idx])
-                if lines[idx].strip() == heredoc_tag:
-                    break
-                idx += 1
-        jobs.append("\n".join(command_lines))
-        idx += 1
+    jobs = _collect_submit_jobs(lines, defaults)
 
     if not jobs:
         console.print("[yellow]No jobs found in file.[/]")
@@ -129,7 +113,10 @@ def submit(file: str, gpus: int, priority: int, memory_tag: Optional[str], no_wa
     if not daemon_running():
         start_daemon()
 
-    parsed_jobs = [_parse_submit_line(raw, gpus, priority, memory_tag) for raw in jobs]
+    parsed_jobs = [
+        _parse_submit_line(raw, defaults["gpus"], defaults["priority"], defaults["memory_tag"])
+        for raw in jobs
+    ]
 
     job_ids = []
     name_to_id: dict[str, str] = {}
@@ -159,6 +146,43 @@ def submit(file: str, gpus: int, priority: int, memory_tag: Optional[str], no_wa
 
     for job_id in job_ids:
         _wait_for_job(job_id)
+
+@main.command()
+@click.argument("file", type=click.Path(exists=True, dir_okay=False))
+def validate(file: str):
+    """Validate a Ravelfile or jobs file"""
+    with open(file, "r") as handle:
+        lines = handle.read().splitlines()
+
+    defaults = {"gpus": 1, "priority": 0, "memory_tag": None}
+    errors = []
+    jobs = _collect_submit_jobs(lines, defaults, errors=errors)
+
+    parsed = []
+    for idx, raw in enumerate(jobs, start=1):
+        try:
+            entry = _parse_submit_line(raw, defaults["gpus"], defaults["priority"], defaults["memory_tag"])
+        except Exception as exc:
+            errors.append(f"job {idx}: failed to parse metadata ({exc})")
+            continue
+        parsed.append(entry)
+
+    names = {p["name"] for p in parsed if p["name"]}
+    for idx, entry in enumerate(parsed, start=1):
+        for dep in entry["after"]:
+            if dep in names:
+                continue
+            if len(dep) == 8 and dep.isalnum():
+                continue
+            errors.append(f"job {idx}: unknown dependency '{dep}'")
+
+    if errors:
+        console.print("[red]Invalid Ravelfile/jobs file:[/]")
+        for err in errors:
+            console.print(f"- {err}")
+        raise SystemExit(1)
+
+    console.print("[green]Ravelfile/jobs file is valid.[/]")
 
 
 def _parse_submit_line(
@@ -214,6 +238,71 @@ def _parse_submit_line(
         "after": after,
     }
 
+def _apply_ravelfile_set(line: str, defaults: dict) -> bool:
+    parts = line.split(None, 2)
+    if len(parts) < 3:
+        return False
+    key = parts[1].strip().lower()
+    value = parts[2].strip()
+    if key == "gpus":
+        try:
+            defaults["gpus"] = int(value)
+        except ValueError:
+            return False
+    elif key == "priority":
+        try:
+            defaults["priority"] = int(value)
+        except ValueError:
+            return False
+    elif key in {"memory", "mem", "memory_tag"}:
+        defaults["memory_tag"] = value or None
+    else:
+        return False
+    return True
+
+
+def _collect_submit_jobs(
+    lines: list[str],
+    defaults: dict,
+    errors: Optional[list[str]] = None,
+) -> list[str]:
+    jobs: list[str] = []
+    idx = 0
+    while idx < len(lines):
+        raw = lines[idx]
+        line = raw.strip()
+        if not line:
+            idx += 1
+            continue
+        if line.startswith("#"):
+            idx += 1
+            continue
+
+        if line.upper().startswith("SET "):
+            if not _apply_ravelfile_set(line, defaults):
+                if errors is not None:
+                    errors.append(f"line {idx + 1}: invalid SET directive")
+            idx += 1
+            continue
+
+        if line.upper().startswith("JOB "):
+            line = raw[raw.upper().find("JOB") + 3 :].lstrip()
+
+        command_lines = [line]
+        heredoc_tag = _detect_heredoc_tag(line)
+        if heredoc_tag:
+            idx += 1
+            while idx < len(lines):
+                command_lines.append(lines[idx])
+                if lines[idx].strip() == heredoc_tag:
+                    break
+                idx += 1
+            if idx >= len(lines) or (lines[idx].strip() != heredoc_tag):
+                if errors is not None:
+                    errors.append(f"line {idx + 1}: unterminated heredoc '{heredoc_tag}'")
+        jobs.append("\n".join(command_lines))
+        idx += 1
+    return jobs
 
 def _detect_heredoc_tag(line: str) -> Optional[str]:
     if "<<'" in line:
@@ -296,9 +385,11 @@ def logs(limit: int, only_failed: bool, only_passed: bool, only_blocked:bool, st
         finished = job.get("finished_at") or "-"
         rc = job.get("returncode")
         rc_text = "-" if rc is None else str(rc)
+        cwd = job.get("cwd") or "-"
+        extra = f" cwd={cwd}" if raw_status == "failed" else ""
         console.print(
             f"{job['id']} {status} rc={rc_text} "
-            f"created={created} finished={finished} :: {cmd}"
+            f"created={created} finished={finished}{extra} :: {cmd}"
         )
 
 
@@ -321,9 +412,24 @@ def daemon_stop():
 
 
 @daemon.command("status")
-def daemon_show_status():
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed status")
+def daemon_show_status(verbose: bool):
     """Show daemon status"""
-    console.print(f"[bold]Daemon:[/] {daemon_status()}")
+    status = daemon_status()
+    console.print(f"[bold]Daemon:[/] {status}")
+    if not verbose:
+        return
+    from .store import list_recent_jobs
+    from .daemon import _read_pid
+    pid = _read_pid()
+    console.print(f"pid={pid if pid else '-'}")
+    console.print(f"db={os.environ.get('RAVEL_DB_PATH', '') or 'default'}")
+    recent = list_recent_jobs(1)
+    if recent:
+        job = recent[0]
+        console.print(
+            f"last_job={job['id']} status={job['status']} created={job.get('created_at','-')}"
+        )
 
 
 def _wait_for_job(job_id: str) -> None:

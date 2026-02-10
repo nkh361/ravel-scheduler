@@ -1,0 +1,26 @@
+# Example Ravelfile
+# Format:
+#   JOB <command>
+#   SET PRIORITY <value>
+#   SET GPUS <value>
+#   SET MEMORY <value>
+# Inline metadata:
+#   JOB name=... priority=... gpus=... memory=... after=... -- <command>
+
+SET GPUS 1
+SET PRIORITY 5
+
+JOB name=extract -- python3 feature_pipeline.py --rows 5000 --dim 64 --sleep 0.1
+JOB name=features after=extract -- python3 feature_pipeline.py --rows 12000 --dim 128 --sleep 0.05
+
+SET PRIORITY 10
+SET MEMORY large
+JOB name=train after=features -- python3 feature_pipeline.py --rows 20000 --dim 256 --sleep 0.0
+
+# A quick preprocessing step that can run anytime
+JOB priority=1 -- python3 - <<'PY'
+import time
+print("preprocess: start")
+time.sleep(0.5)
+print("preprocess: done")
+PY

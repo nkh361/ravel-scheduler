@@ -30,6 +30,7 @@ def _connect() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     _init_db(conn)
+    conn.commit()
     return conn
 
 
@@ -41,6 +42,8 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition
 
 
 def _init_db(conn: sqlite3.Connection) -> None:
+    _ensure_meta_table(conn)
+    _get_schema_version(conn)
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS jobs (
@@ -79,6 +82,41 @@ def _init_db(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_job_deps_depends
             ON job_deps(depends_on);
         """
+    )
+    _set_schema_version(conn, 2)
+
+
+def _ensure_meta_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        """
+    )
+
+
+def _get_schema_version(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = 'schema_version'"
+    ).fetchone()
+    if not row:
+        return 0
+    try:
+        return int(row[0])
+    except (TypeError, ValueError):
+        return 0
+
+
+def _set_schema_version(conn: sqlite3.Connection, version: int) -> None:
+    conn.execute(
+        """
+        INSERT INTO meta (key, value)
+        VALUES ('schema_version', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (str(version),),
     )
 
 def add_job(
