@@ -19,6 +19,8 @@ Fast, local GPU scheduler with a shared, cross-terminal job queue and daemon.
    - `ravel queue`
 3. Watch jobs live from any terminal:
    - `ravel dash`
+   - Stays open until you exit (Ctrl+D or Ctrl+C)
+   - Uses a full-screen terminal view (like vim)
 4. Show recent job summaries:
    - `ravel logs --limit 10`
    - `ravel logs --failed`

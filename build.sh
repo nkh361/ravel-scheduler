@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python -m pip install -e .
-python -m build
+python3 -m pip install -e .
+python3 -m build

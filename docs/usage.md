@@ -24,6 +24,8 @@ This guide explains how to install and use Ravel from the CLI, including common 
    - `ravel queue`
 7. Live dashboard (watch running jobs):
    - `ravel dash`
+   - Stays open until you exit (Ctrl+D or Ctrl+C)
+   - Uses a full-screen terminal view (like vim)
 8. View recent jobs:
    - `ravel logs --limit 10`
    - `ravel logs --failed`

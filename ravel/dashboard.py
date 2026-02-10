@@ -1,46 +1,107 @@
+import select
+import sys
 import time
-from tqdm import tqdm
+from rich.console import Console
+from rich.live import Live
+from rich.layout import Layout
+from rich.panel import Panel
+from rich.table import Table
 from .store import list_jobs
 
 def dashboard(refresh=0.5):
     """Display the dashboard"""
-    bars = {}
+    console = Console()
     try:
-        while True:
-            running = {job["id"]: job for job in list_jobs(["running"])}
-            queued = list_jobs(["queued"])
-
-            if not queued and not running:
-                for bar in bars.values():
-                    bar.n = bar.total
-                    bar.refresh()
-                    bar.close()
-                print("All jobs are finished.")
-                break
-
-            for job_id, job in running.items():
-                if job_id not in bars:
-                    bars[job_id] = tqdm(
-                        total=100,
-                        desc=f"{job_id}",
-                        position=len(bars),
-                        leave=True
-                    )
-
-            for job_id, bar in list(bars.items()):
-                if job_id in running and bar.n < 99:
-                    bar.update(1)
-
-            finished = set(bars) - set(running)
-            for job_id in finished:
-                bar = bars.pop(job_id)
-                bar.n = 100
-                bar.refresh()
-                bar.close()
-                print(f"{job_id} finished")
-
-            time.sleep(refresh)
-
+        with Live(
+            _render_dashboard([], [], [], []),
+            console=console,
+            refresh_per_second=max(1, int(1 / refresh)),
+            screen=True,
+        ) as live:
+            while True:
+                if _stdin_closed():
+                    break
+                running = list_jobs(["running"])
+                queued = list_jobs(["queued"])
+                blocked = list_jobs(["blocked"])
+                failed = list_jobs(["failed"])
+                live.update(_render_dashboard(running, queued, blocked, failed))
+                time.sleep(refresh)
     except KeyboardInterrupt:
-        for bar in bars.values():
-            bar.close()
+        pass
+
+def _stdin_closed() -> bool:
+    if not sys.stdin or sys.stdin.closed:
+        return True
+    if not sys.stdin.isatty():
+        return False
+    try:
+        ready, _, _ = select.select([sys.stdin], [], [], 0)
+        if ready:
+            data = sys.stdin.read(1)
+            return data == ""
+    except Exception:
+        return False
+    return False
+
+
+def _render_dashboard(
+    running: list[dict],
+    queued: list[dict],
+    blocked: list[dict],
+    failed: list[dict],
+) -> Layout:
+    layout = Layout()
+    layout.split(
+        Layout(name="header", size=3),
+        Layout(name="body"),
+    )
+
+    header_text = (
+        f"running={len(running)}  "
+        f"queued={len(queued)}  "
+        f"blocked={len(blocked)}  "
+        f"failed={len(failed)}"
+    )
+    layout["header"].update(Panel(header_text, title="Ravel", padding=(0, 2)))
+
+    if not running and not queued:
+        layout["body"].update(Panel("No active jobs. Waiting for new jobs..."))
+        return layout
+
+    table = Table(title="Jobs", show_lines=False)
+    table.add_column("Status", no_wrap=True)
+    table.add_column("ID", no_wrap=True)
+    table.add_column("GPUs", no_wrap=True)
+    table.add_column("Priority", no_wrap=True)
+    table.add_column("Created", no_wrap=True)
+    table.add_column("Command", overflow="fold")
+
+    for job in running:
+        table.add_row(
+            "running",
+            job["id"],
+            str(job.get("gpus", "-")),
+            str(job.get("priority", 0)),
+            job.get("created_at", "-"),
+            _truncate_command(job.get("command", [])),
+        )
+    for job in queued:
+        table.add_row(
+            "queued",
+            job["id"],
+            str(job.get("gpus", "-")),
+            str(job.get("priority", 0)),
+            job.get("created_at", "-"),
+            _truncate_command(job.get("command", [])),
+        )
+
+    layout["body"].update(Panel(table))
+    return layout
+
+
+def _truncate_command(command: list[str], max_len: int = 80) -> str:
+    text = " ".join(command)
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3] + "..."
