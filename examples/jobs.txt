@@ -3,9 +3,9 @@
 #   name=... priority=... gpus=... memory=... after=... -- <command>
 # The -- separator is required when using metadata.
 
-# name=extract priority=5 -- python3 examples/feature_pipeline.py --rows 5000 --dim 64 --sleep 0.1
-# name=features priority=5 after=extract -- python3 examples/feature_pipeline.py --rows 12000 --dim 128 --sleep 0.05
-# name=train priority=10 after=features memory=large -- python3 examples/feature_pipeline.py --rows 20000 --dim 256 --sleep 0.0
+# name=extract priority=5 -- python3 feature_pipeline.py --rows 5000 --dim 64 --sleep 0.1
+# name=features priority=5 after=extract -- python3 feature_pipeline.py --rows 12000 --dim 128 --sleep 0.05
+# name=train priority=10 after=features memory=large -- python3 feature_pipeline.py --rows 20000 --dim 256 --sleep 0.0
 
 name=extract priority=5 -- python3 feature_pipeline.py --rows 5000 --dim 64 --sleep 0.1
 name=features priority=5 after=extract -- python3 feature_pipeline.py --rows 12000 --dim 128 --sleep 0.05
