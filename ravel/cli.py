@@ -245,22 +245,23 @@ def dash():
 @click.option("--limit", "-l", default=10, help="Number of recent jobs to show")
 @click.option("--failed", "only_failed", is_flag=True, help="Show only failed jobs")
 @click.option("--passed", "only_passed", is_flag=True, help="Show only passed jobs")
+@click.option("--blocked", "only_blocked", is_flag=True, help="Show only blocked jobs")
 @click.option(
     "--status",
     "status_filter",
     default=None,
     help="Filter by status: queued,running,done,failed,blocked",
 )
-def logs(limit: int, only_failed: bool, only_passed: bool, status_filter: Optional[str]):
+def logs(limit: int, only_failed: bool, only_passed: bool, only_blocked:bool, status_filter: Optional[str]):
     """Show recent jobs with summaries"""
     from .store import list_recent_jobs
 
     if only_failed and only_passed:
-        console.print("[red]Choose only one of --failed or --passed[/]")
+        console.print("[red]Choose only one of --failed, --passed, or --blocked[/]")
         return
 
     if status_filter and (only_failed or only_passed):
-        console.print("[red]Choose either --status or --failed/--passed[/]")
+        console.print("[red]Choose either --status or --failed/--passed/--blocked[/]")
         return
 
     statuses = None
@@ -268,6 +269,8 @@ def logs(limit: int, only_failed: bool, only_passed: bool, status_filter: Option
         statuses = ["failed"]
     elif only_passed:
         statuses = ["done"]
+    elif only_blocked:
+        statuses = ["blocked"]
     elif status_filter:
         statuses = [s.strip() for s in status_filter.split(",") if s.strip()]
 
@@ -284,6 +287,8 @@ def logs(limit: int, only_failed: bool, only_passed: bool, status_filter: Option
             status = "[bold green]done[/]"
         elif raw_status == "failed":
             status = "[bold red]failed[/]"
+        elif raw_status == "blocked":
+            status = "[bold yellow]blocked[/]"
         else:
             status = raw_status
         cmd = " ".join(job["command"])
