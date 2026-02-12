@@ -14,7 +14,41 @@ Fast, local GPU scheduler with a shared, cross-terminal job queue and daemon.
 2. Windows (PowerShell):
    - `powershell -ExecutionPolicy Bypass -File build.ps1`
 3. Cross-platform (Python):
-   - `python build.py`
+   - `python build_helper.py`
+4. To install dependencies during build:
+   - `RAVEL_BUILD_DEPS=1 ./build.sh`
+
+## Web UI Tutorial (Flask)
+1. Start the daemon (if it is not running):
+   - `ravel daemon start`
+2. Launch the web UI:
+   - `ravel web --host 127.0.0.1 --port 8000`
+3. Open your browser:
+   - `http://127.0.0.1:8000`
+
+## Ravelfile Tutorial
+1. Create a `Ravelfile` in your project root:
+   ```text
+   # Example Ravelfile
+   # JOB <command>
+   # SET PRIORITY <value>
+   # SET GPUS <value>
+   # SET MEMORY <value>
+
+   SET GPUS 1
+   SET PRIORITY 5
+
+   JOB name=extract -- python3 examples/feature_pipeline.py --rows 5000 --dim 64 --sleep 0.1
+   JOB name=features after=extract -- python3 examples/feature_pipeline.py --rows 12000 --dim 128 --sleep 0.05
+
+   SET PRIORITY 10
+   SET MEMORY large
+   JOB name=train after=features -- python3 examples/feature_pipeline.py --rows 20000 --dim 256 --sleep 0.0
+   ```
+2. Validate it:
+   - `ravel validate Ravelfile`
+3. Submit it:
+   - `ravel submit Ravelfile --no-wait`
 
 ## Usage
 1. Run a job (auto-starts the daemon if needed):
