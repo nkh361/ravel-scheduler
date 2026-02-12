@@ -35,6 +35,15 @@ def daemon_running() -> bool:
     pid = _read_pid()
     if not pid:
         return False
+    if os.name == "nt":
+        try:
+            import psutil
+            if psutil.pid_exists(pid):
+                return True
+        except Exception:
+            pass
+        _clear_pid()
+        return False
     try:
         os.kill(pid, 0)
         return True
@@ -65,7 +74,13 @@ def stop_daemon() -> None:
         console.print("[yellow]Daemon not running[/]")
         return
     try:
-        os.kill(pid, signal.SIGTERM)
+        if os.name == "nt":
+            import psutil
+            proc = psutil.Process(pid)
+            proc.terminate()
+            proc.wait(timeout=10)
+        else:
+            os.kill(pid, signal.SIGTERM)
         console.print("[green]Daemon stopped[/]")
     except OSError:
         console.print("[yellow]Daemon already stopped[/]")
