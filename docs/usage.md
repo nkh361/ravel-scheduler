@@ -33,7 +33,10 @@ This guide explains how to install and use Ravel from the CLI, including common 
    - `ravel logs --failed`
    - `ravel logs --passed`
    - `ravel logs --status queued,running,blocked`
-10. Submit a batch file (Ravelfile or jobs.txt):
+10. Clear jobs:
+   - `ravel clear` (clears queued jobs)
+   - `ravel clear --all` (clears all jobs)
+11. Submit a batch file (Ravelfile or jobs.txt):
    - `ravel submit Ravelfile --no-wait`
    - `ravel submit jobs.txt --no-wait`
    - Each line is executed as-is via `/bin/bash -lc` (no re-quoting).
@@ -45,7 +48,7 @@ This guide explains how to install and use Ravel from the CLI, including common 
    - Relative paths resolve from the directory containing the batch file.
    - Heredocs are supported (lines are grouped until the heredoc terminator).
    - On Windows (PowerShell), commands run via `powershell -NoProfile -Command`.
-11. Validate a Ravelfile/jobs file:
+12. Validate a Ravelfile/jobs file:
    - `ravel validate Ravelfile`
 
 ## Daemon Controls

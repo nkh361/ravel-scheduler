@@ -86,6 +86,28 @@ def queue():
     list_jobs()
 
 @main.command()
+@click.option("--queued", "only_queued", is_flag=True, help="Clear only queued jobs")
+@click.option("--all", "all_jobs", is_flag=True, help="Clear all jobs (dangerous)")
+@click.option("-y", "--yes", is_flag=True, help="Skip confirmation")
+def clear(only_queued: bool, all_jobs: bool, yes: bool):
+    """Clear queued jobs or all jobs"""
+    from .store import clear_jobs
+
+    if all_jobs and only_queued:
+        console.print("[red]Choose only one of --all or --queued[/]")
+        return
+
+    if all_jobs:
+        if not yes and not click.confirm("Clear ALL jobs? This cannot be undone."):
+            return
+        deleted = clear_jobs()
+        console.print(f"[yellow]Cleared {deleted} jobs.[/]")
+        return
+
+    deleted = clear_jobs(["queued"])
+    console.print(f"[green]Cleared {deleted} queued jobs.[/]")
+
+@main.command()
 @click.argument("file", type=click.Path(exists=True, dir_okay=False))
 @click.option("--gpus", "-g", default=1, help="Number of GPUs")
 @click.option("--priority", "-p", default=0, help="Higher runs first")

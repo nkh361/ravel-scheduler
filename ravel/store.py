@@ -315,6 +315,20 @@ def clear_jobs_for_tests() -> None:
         conn.execute("DELETE FROM jobs")
 
 
+def clear_jobs(statuses: Optional[Iterable[str]] = None) -> int:
+    with _connect() as conn:
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            result = conn.execute(
+                f"DELETE FROM jobs WHERE status IN ({placeholders})",
+                list(statuses),
+            )
+        else:
+            result = conn.execute("DELETE FROM jobs")
+        conn.execute("DELETE FROM job_deps")
+    return result.rowcount if result.rowcount is not None else 0
+
+
 def _row_to_job(row: sqlite3.Row) -> Dict:
     job = dict(row)
     job["command"] = json.loads(job["command"])

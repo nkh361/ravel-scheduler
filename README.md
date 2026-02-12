@@ -70,18 +70,21 @@ Fast, local GPU scheduler with a shared, cross-terminal job queue and daemon.
    - `ravel logs --failed`
    - `ravel logs --passed`
    - `ravel logs --status queued,running,blocked`
-6. Manage the daemon:
+6. Clear jobs:
+   - `ravel clear` (clears queued jobs)
+   - `ravel clear --all` (clears all jobs)
+7. Manage the daemon:
    - `ravel daemon status`
    - `ravel daemon status --verbose`
    - `ravel daemon stop`
-7. Submit a batch file:
+8. Submit a batch file:
    - `ravel submit Ravelfile --no-wait`
    - `ravel submit jobs.txt --no-wait`
    - Optional metadata: `JOB name=... priority=... gpus=... memory=... after=... -- <command>`
    - Relative paths resolve from the directory containing the batch file.
    - Heredocs are supported.
    - On Windows (PowerShell), commands run via `powershell -NoProfile -Command`.
-8. Validate a Ravelfile/jobs file:
+9. Validate a Ravelfile/jobs file:
    - `ravel validate Ravelfile`
 
 ## Example
