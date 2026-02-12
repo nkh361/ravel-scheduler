@@ -8,6 +8,48 @@ Fast, local GPU scheduler with a shared, cross-terminal job queue and daemon.
 2. Install in editable mode:
    - `pip install -e .`
 
+## Build
+1. macOS / Linux:
+   - `./build.sh`
+2. Windows (PowerShell):
+   - `powershell -ExecutionPolicy Bypass -File build.ps1`
+3. Cross-platform (Python):
+   - `python build_helper.py`
+4. To install dependencies during build:
+   - `RAVEL_BUILD_DEPS=1 ./build.sh`
+
+## Web UI Tutorial (Flask)
+1. Start the daemon (if it is not running):
+   - `ravel daemon start`
+2. Launch the web UI:
+   - `ravel web --host 127.0.0.1 --port 8000`
+3. Open your browser:
+   - `http://127.0.0.1:8000`
+
+## Ravelfile Tutorial
+1. Create a `Ravelfile` in your project root:
+   ```text
+   # Example Ravelfile
+   # JOB <command>
+   # SET PRIORITY <value>
+   # SET GPUS <value>
+   # SET MEMORY <value>
+
+   SET GPUS 1
+   SET PRIORITY 5
+
+   JOB name=extract -- python3 examples/feature_pipeline.py --rows 5000 --dim 64 --sleep 0.1
+   JOB name=features after=extract -- python3 examples/feature_pipeline.py --rows 12000 --dim 128 --sleep 0.05
+
+   SET PRIORITY 10
+   SET MEMORY large
+   JOB name=train after=features -- python3 examples/feature_pipeline.py --rows 20000 --dim 256 --sleep 0.0
+   ```
+2. Validate it:
+   - `ravel validate Ravelfile`
+3. Submit it:
+   - `ravel submit Ravelfile --no-wait`
+
 ## Usage
 1. Run a job (auto-starts the daemon if needed):
    - `ravel run "python3 path/to/script.py"`
@@ -21,22 +63,24 @@ Fast, local GPU scheduler with a shared, cross-terminal job queue and daemon.
    - `ravel dash`
    - Stays open until you exit (Ctrl+D or Ctrl+C)
    - Uses a full-screen terminal view (like vim)
-4. Show recent job summaries:
+4. Start the web UI:
+   - `ravel web --host 127.0.0.1 --port 8000`
+5. Show recent job summaries:
    - `ravel logs --limit 10`
    - `ravel logs --failed`
    - `ravel logs --passed`
    - `ravel logs --status queued,running,blocked`
-4. Manage the daemon:
+6. Manage the daemon:
    - `ravel daemon status`
    - `ravel daemon status --verbose`
    - `ravel daemon stop`
-5. Submit a batch file:
+7. Submit a batch file:
    - `ravel submit Ravelfile --no-wait`
    - `ravel submit jobs.txt --no-wait`
    - Optional metadata: `JOB name=... priority=... gpus=... memory=... after=... -- <command>`
    - Relative paths resolve from the directory containing the batch file.
    - Heredocs are supported.
-6. Validate a Ravelfile/jobs file:
+8. Validate a Ravelfile/jobs file:
    - `ravel validate Ravelfile`
 
 ## Example
