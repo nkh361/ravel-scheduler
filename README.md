@@ -8,6 +8,14 @@ Fast, local GPU scheduler with a shared, cross-terminal job queue and daemon.
 2. Install in editable mode:
    - `pip install -e .`
 
+## Build
+1. macOS / Linux:
+   - `./build.sh`
+2. Windows (PowerShell):
+   - `powershell -ExecutionPolicy Bypass -File build.ps1`
+3. Cross-platform (Python):
+   - `python build.py`
+
 ## Usage
 1. Run a job (auto-starts the daemon if needed):
    - `ravel run "python3 path/to/script.py"`
@@ -21,22 +29,24 @@ Fast, local GPU scheduler with a shared, cross-terminal job queue and daemon.
    - `ravel dash`
    - Stays open until you exit (Ctrl+D or Ctrl+C)
    - Uses a full-screen terminal view (like vim)
-4. Show recent job summaries:
+4. Start the web UI:
+   - `ravel web --host 127.0.0.1 --port 8000`
+5. Show recent job summaries:
    - `ravel logs --limit 10`
    - `ravel logs --failed`
    - `ravel logs --passed`
    - `ravel logs --status queued,running,blocked`
-4. Manage the daemon:
+6. Manage the daemon:
    - `ravel daemon status`
    - `ravel daemon status --verbose`
    - `ravel daemon stop`
-5. Submit a batch file:
+7. Submit a batch file:
    - `ravel submit Ravelfile --no-wait`
    - `ravel submit jobs.txt --no-wait`
    - Optional metadata: `JOB name=... priority=... gpus=... memory=... after=... -- <command>`
    - Relative paths resolve from the directory containing the batch file.
    - Heredocs are supported.
-6. Validate a Ravelfile/jobs file:
+8. Validate a Ravelfile/jobs file:
    - `ravel validate Ravelfile`
 
 ## Example

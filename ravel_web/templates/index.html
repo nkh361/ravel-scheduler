@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ravel Dashboard</title>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #151a22;
+        --text: #e6e6e6;
+        --muted: #a0a7b4;
+        --accent: #45c0a5;
+        --warn: #f5c84b;
+        --fail: #f26b6b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        background: radial-gradient(80% 60% at 10% 10%, #1b2230 0%, #0f1115 60%);
+        color: var(--text);
+        min-height: 100vh;
+      }
+      header {
+        padding: 20px 28px;
+        border-bottom: 1px solid #202634;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .title {
+        font-weight: 700;
+        letter-spacing: 1px;
+      }
+      .meta {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .grid {
+        display: grid;
+        gap: 16px;
+        padding: 20px 28px 28px;
+        grid-template-columns: 1.1fr 1fr;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid #232a3a;
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 10px 24px rgba(0,0,0,0.2);
+      }
+      .counts {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .filters {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+      }
+      .filter-btn {
+        background: #1c2433;
+        border: 1px solid #2a3346;
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-size: 12px;
+        color: var(--muted);
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .filter-btn.active {
+        color: var(--text);
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px rgba(69, 192, 165, 0.2);
+      }
+      .pill {
+        background: #1c2433;
+        border: 1px solid #2a3346;
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .pill strong { color: var(--text); }
+      .bar {
+        height: 8px;
+        background: #232a3a;
+        border-radius: 999px;
+        overflow: hidden;
+        margin-top: 6px;
+      }
+      .bar > span {
+        display: block;
+        height: 100%;
+        background: var(--accent);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      th, td {
+        text-align: left;
+        padding: 6px 4px;
+        border-bottom: 1px solid #202634;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .status-running { color: var(--accent); }
+      .status-queued { color: var(--muted); }
+      .status-failed { color: var(--fail); }
+      .status-blocked { color: var(--warn); }
+      .status-done { color: var(--accent); }
+      .empty {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      @media (max-width: 960px) {
+        .grid { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <div class="title">RAVEL DASHBOARD</div>
+        <div class="meta" id="meta"></div>
+        <div class="filters" id="filters"></div>
+      </div>
+      <div class="counts" id="counts"></div>
+    </header>
+    <div class="grid">
+      <div class="panel">
+        <h3>Resources</h3>
+        <div id="resources"></div>
+      </div>
+      <div class="panel">
+        <h3>Running + Queued</h3>
+        <div id="jobs"></div>
+      </div>
+    </div>
+    <script>
+      const fmtPct = (v) => `${v.toFixed(1)}%`;
+      const fmtBytes = (v) => {
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let i = 0;
+        let val = v;
+        while (val > 1024 && i < units.length - 1) {
+          val /= 1024;
+          i += 1;
+        }
+        return `${val.toFixed(1)} ${units[i]}`;
+      };
+
+      const filterState = {
+        status: "running,queued",
+      };
+
+      function renderFilters() {
+        const el = document.getElementById("filters");
+        const buttons = [
+          ["All", ""],
+          ["Running", "running"],
+          ["Queued", "queued"],
+          ["Failed", "failed"],
+          ["Done", "done"],
+          ["Blocked", "blocked"],
+        ];
+        el.innerHTML = buttons.map(([label, value]) => {
+          const active = filterState.status === value;
+          return `<button class="filter-btn ${active ? "active" : ""}" data-status="${value}">${label}</button>`;
+        }).join("");
+
+        el.querySelectorAll("button").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            filterState.status = btn.getAttribute("data-status") || "";
+            renderFilters();
+            refreshJobs();
+          });
+        });
+      }
+
+      function renderCounts(data) {
+        const el = document.getElementById("counts");
+        const counts = data.counts || {};
+        const items = [
+          ["running", counts.running || 0],
+          ["queued", counts.queued || 0],
+          ["blocked", counts.blocked || 0],
+          ["failed", counts.failed || 0],
+          ["done", counts.done || 0],
+        ];
+        el.innerHTML = items.map(([k, v]) => (
+          `<div class="pill"><strong>${v}</strong> ${k}</div>`
+        )).join("");
+        const meta = document.getElementById("meta");
+        meta.textContent = `daemon: ${data.daemon} • db: ${data.db}`;
+      }
+
+      function renderResources(data) {
+        const el = document.getElementById("resources");
+        const gpus = data.gpus || [];
+        let html = "";
+        html += `<div>CPU: ${fmtPct(data.cpu_percent || 0)}</div>`;
+        html += `<div class="bar"><span style="width:${data.cpu_percent || 0}%"></span></div>`;
+        html += `<div style="margin-top:8px">Memory: ${fmtPct(data.memory_percent || 0)} (${fmtBytes(data.memory_used || 0)} / ${fmtBytes(data.memory_total || 0)})</div>`;
+        html += `<div class="bar"><span style="width:${data.memory_percent || 0}%"></span></div>`;
+        if (gpus.length === 0) {
+          html += `<div class="empty" style="margin-top:10px">No NVIDIA GPU data</div>`;
+        } else {
+          html += `<div style="margin-top:10px;font-weight:600">GPUs</div>`;
+          gpus.forEach((gpu) => {
+            html += `<div style="margin-top:6px">GPU ${gpu.index}: ${fmtPct(gpu.util_gpu)}</div>`;
+            html += `<div class="bar"><span style="width:${gpu.util_gpu}%"></span></div>`;
+            html += `<div class="meta">VRAM ${fmtPct(gpu.util_mem)} (${gpu.memory_used} / ${gpu.memory_total} MB)</div>`;
+          });
+        }
+        el.innerHTML = html;
+      }
+
+      function renderJobs(data) {
+        const el = document.getElementById("jobs");
+        const jobs = data.jobs || [];
+        if (jobs.length === 0) {
+          el.innerHTML = `<div class="empty">No running or queued jobs.</div>`;
+          return;
+        }
+        let html = `<table><thead><tr><th>Status</th><th>ID</th><th>GPUs</th><th>Priority</th><th>Created</th><th>Command</th></tr></thead><tbody>`;
+        jobs.forEach((job) => {
+          const cls = `status-${job.status}`;
+          html += `<tr><td class="${cls}">${job.status}</td><td>${job.id}</td><td>${job.gpus ?? "-"}</td><td>${job.priority ?? 0}</td><td>${job.created_at ?? "-"}</td><td>${job.command}</td></tr>`;
+        });
+        html += `</tbody></table>`;
+        el.innerHTML = html;
+      }
+
+      async function refreshJobs() {
+        const status = filterState.status;
+        const qs = status ? `status=${encodeURIComponent(status)}&limit=50` : "limit=50";
+        const jobs = await fetch(`/api/jobs?${qs}`).then(r => r.json());
+        renderJobs(jobs);
+      }
+
+      async function refresh() {
+        const summary = await fetch("/api/summary").then(r => r.json());
+        const resources = await fetch("/api/resources").then(r => r.json());
+        renderCounts(summary);
+        renderResources(resources);
+        renderFilters();
+        await refreshJobs();
+      }
+
+      refresh();
+      setInterval(refresh, 2000);
+    </script>
+  </body>
+</html>

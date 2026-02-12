@@ -330,6 +330,16 @@ def dash():
     from .dashboard import dashboard
     dashboard()
 
+
+@main.command()
+@click.option("--host", default="127.0.0.1", help="Host interface")
+@click.option("--port", default=8000, type=int, help="Port to serve")
+def web(host: str, port: int):
+    """Start the web UI"""
+    from ravel_web.app import create_app
+    app = create_app()
+    app.run(host=host, port=port, threaded=True)
+
 @main.command()
 @click.option("--limit", "-l", default=10, help="Number of recent jobs to show")
 @click.option("--failed", "only_failed", is_flag=True, help="Show only failed jobs")
