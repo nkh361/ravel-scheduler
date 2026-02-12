@@ -44,6 +44,7 @@ This guide explains how to install and use Ravel from the CLI, including common 
    - `after=` can reference `name=` entries or existing job IDs.
    - Relative paths resolve from the directory containing the batch file.
    - Heredocs are supported (lines are grouped until the heredoc terminator).
+   - On Windows (PowerShell), commands run via `powershell -NoProfile -Command`.
 11. Validate a Ravelfile/jobs file:
    - `ravel validate Ravelfile`
 

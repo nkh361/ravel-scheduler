@@ -80,6 +80,7 @@ Fast, local GPU scheduler with a shared, cross-terminal job queue and daemon.
    - Optional metadata: `JOB name=... priority=... gpus=... memory=... after=... -- <command>`
    - Relative paths resolve from the directory containing the batch file.
    - Heredocs are supported.
+   - On Windows (PowerShell), commands run via `powershell -NoProfile -Command`.
 8. Validate a Ravelfile/jobs file:
    - `ravel validate Ravelfile`
 

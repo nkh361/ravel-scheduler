@@ -122,7 +122,7 @@ def submit(file: str, gpus: int, priority: int, memory_tag: Optional[str], no_wa
     name_to_id: dict[str, str] = {}
     submit_cwd = os.path.abspath(os.path.dirname(file))
     for entry in parsed_jobs:
-        cmd_list = ["/bin/bash", "-lc", entry["command"]]
+        cmd_list = _shell_command(entry["command"])
         job_id = add_job(
             cmd_list,
             gpus=entry["gpus"],
@@ -237,6 +237,12 @@ def _parse_submit_line(
         "name": name,
         "after": after,
     }
+
+
+def _shell_command(command: str) -> list[str]:
+    if os.name == "nt":
+        return ["powershell", "-NoProfile", "-Command", command]
+    return ["/bin/bash", "-lc", command]
 
 def _apply_ravelfile_set(line: str, defaults: dict) -> bool:
     parts = line.split(None, 2)
