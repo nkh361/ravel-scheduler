@@ -13,6 +13,7 @@ from .store import (
     list_ready_jobs,
     mark_blocked_jobs_due_to_failed_deps,
     set_job_finished,
+    set_job_pid,
     try_claim_job,
 )
 from .utils import console, get_free_gpus
@@ -144,19 +145,20 @@ def _run_job(job_id: str, gpus_assigned: list[int]) -> None:
     env["NVIDIA_VISIBLE_DEVICES"] = ",".join(map(str, gpus_assigned))
 
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             job["command"],
             shell=False,
             stdin=subprocess.DEVNULL,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             cwd=job.get("cwd") or None,
             env=env,
         )
-        status = "done" if result.returncode == 0 else "failed"
-        stdout = result.stdout or ""
-        stderr = result.stderr or ""
-        returncode: Optional[int] = result.returncode
+        set_job_pid(job_id, proc.pid)
+        stdout, stderr = proc.communicate()
+        returncode = proc.returncode
+        status = "done" if returncode == 0 else "failed"
     except Exception as exc:
         status = "failed"
         stdout = ""
