@@ -20,15 +20,18 @@ def test_job_gets_executed(monkeypatch, tmp_path):
     clear_jobs_for_tests()
 
     calls = []
-    def fake_run(*args, **kwargs):
-        calls.append(args[0])
-        return type(
-            "Obj",
-            (),
-            {"returncode": 0, "stdout": "", "stderr": ""},
-        )()
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    class FakeProc:
+        def __init__(self, cmd):
+            self.pid = 12345
+            self._cmd = cmd
+            self.returncode = 0
+
+        def communicate(self):
+            calls.append(self._cmd)
+            return "", ""
+
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProc(cmd))
 
     job_id = add_job(["echo", "hello", "ravel"], gpus=1)
     run_once(inline=True)
@@ -48,15 +51,18 @@ def test_priority_fifo_order(monkeypatch, tmp_path):
     clear_jobs_for_tests()
 
     calls = []
-    def fake_run(*args, **kwargs):
-        calls.append(args[0])
-        return type(
-            "Obj",
-            (),
-            {"returncode": 0, "stdout": "", "stderr": ""},
-        )()
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    class FakeProc:
+        def __init__(self, cmd):
+            self.pid = 12345
+            self._cmd = cmd
+            self.returncode = 0
+
+        def communicate(self):
+            calls.append(self._cmd)
+            return "", ""
+
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProc(cmd))
 
     job_low = add_job(["echo", "low"], gpus=1, priority=0)
     job_high_a = add_job(["echo", "high-a"], gpus=1, priority=10)
@@ -84,15 +90,18 @@ def test_dag_dependency(monkeypatch, tmp_path):
     clear_jobs_for_tests()
 
     calls = []
-    def fake_run(*args, **kwargs):
-        calls.append(args[0])
-        return type(
-            "Obj",
-            (),
-            {"returncode": 0, "stdout": "", "stderr": ""},
-        )()
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    class FakeProc:
+        def __init__(self, cmd):
+            self.pid = 12345
+            self._cmd = cmd
+            self.returncode = 0
+
+        def communicate(self):
+            calls.append(self._cmd)
+            return "", ""
+
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProc(cmd))
 
     job_a = add_job(["echo", "a"], gpus=1)
     job_b = add_job(["echo", "b"], gpus=1, depends_on=[job_a])
@@ -115,15 +124,18 @@ def test_memory_tag_limits(monkeypatch, tmp_path):
     clear_jobs_for_tests()
 
     calls = []
-    def fake_run(*args, **kwargs):
-        calls.append(args[0])
-        return type(
-            "Obj",
-            (),
-            {"returncode": 0, "stdout": "", "stderr": ""},
-        )()
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    class FakeProc:
+        def __init__(self, cmd):
+            self.pid = 12345
+            self._cmd = cmd
+            self.returncode = 0
+
+        def communicate(self):
+            calls.append(self._cmd)
+            return "", ""
+
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProc(cmd))
 
     job_a = add_job(["echo", "large-a"], gpus=1, memory_tag="large")
     job_b = add_job(["echo", "large-b"], gpus=1, memory_tag="large")

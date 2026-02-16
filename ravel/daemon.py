@@ -13,6 +13,7 @@ from .store import (
     list_ready_jobs,
     mark_blocked_jobs_due_to_failed_deps,
     set_job_finished,
+    set_job_pid,
     try_claim_job,
 )
 from .utils import console, get_free_gpus
@@ -33,6 +34,15 @@ def _log_path() -> str:
 def daemon_running() -> bool:
     pid = _read_pid()
     if not pid:
+        return False
+    if os.name == "nt":
+        try:
+            import psutil
+            if psutil.pid_exists(pid):
+                return True
+        except Exception:
+            pass
+        _clear_pid()
         return False
     try:
         os.kill(pid, 0)
@@ -64,7 +74,13 @@ def stop_daemon() -> None:
         console.print("[yellow]Daemon not running[/]")
         return
     try:
-        os.kill(pid, signal.SIGTERM)
+        if os.name == "nt":
+            import psutil
+            proc = psutil.Process(pid)
+            proc.terminate()
+            proc.wait(timeout=10)
+        else:
+            os.kill(pid, signal.SIGTERM)
         console.print("[green]Daemon stopped[/]")
     except OSError:
         console.print("[yellow]Daemon already stopped[/]")
@@ -144,19 +160,20 @@ def _run_job(job_id: str, gpus_assigned: list[int]) -> None:
     env["NVIDIA_VISIBLE_DEVICES"] = ",".join(map(str, gpus_assigned))
 
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             job["command"],
             shell=False,
             stdin=subprocess.DEVNULL,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             cwd=job.get("cwd") or None,
             env=env,
         )
-        status = "done" if result.returncode == 0 else "failed"
-        stdout = result.stdout or ""
-        stderr = result.stderr or ""
-        returncode: Optional[int] = result.returncode
+        set_job_pid(job_id, proc.pid)
+        stdout, stderr = proc.communicate()
+        returncode = proc.returncode
+        status = "done" if returncode == 0 else "failed"
     except Exception as exc:
         status = "failed"
         stdout = ""

@@ -58,6 +58,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
             started_at TEXT,
             finished_at TEXT,
             gpus_assigned TEXT,
+            pid INTEGER,
             returncode INTEGER,
             stdout TEXT,
             stderr TEXT
@@ -71,6 +72,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "jobs", "priority", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "jobs", "memory_tag", "TEXT")
     _ensure_column(conn, "jobs", "cwd", "TEXT")
+    _ensure_column(conn, "jobs", "pid", "INTEGER")
     conn.executescript(
         """
         CREATE INDEX IF NOT EXISTS idx_jobs_status_created
@@ -282,6 +284,13 @@ def set_job_assigned_gpus(job_id: str, gpus_assigned: List[int]) -> None:
             (json.dumps(gpus_assigned), job_id),
         )
 
+def set_job_pid(job_id: str, pid: int) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE jobs SET pid = ? WHERE id = ?",
+            (pid, job_id),
+        )
+
 
 def set_job_finished(
     job_id: str,
@@ -299,7 +308,8 @@ def set_job_finished(
                 finished_at = ?,
                 returncode = ?,
                 stdout = ?,
-                stderr = ?
+                stderr = ?,
+                pid = NULL
             WHERE id = ?
             """,
             (status, finished_at, returncode, stdout, stderr, job_id),
@@ -313,6 +323,20 @@ def clear_jobs_for_tests() -> None:
     with _connect() as conn:
         conn.execute("DELETE FROM job_deps")
         conn.execute("DELETE FROM jobs")
+
+
+def clear_jobs(statuses: Optional[Iterable[str]] = None) -> int:
+    with _connect() as conn:
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            result = conn.execute(
+                f"DELETE FROM jobs WHERE status IN ({placeholders})",
+                list(statuses),
+            )
+        else:
+            result = conn.execute("DELETE FROM jobs")
+        conn.execute("DELETE FROM job_deps")
+    return result.rowcount if result.rowcount is not None else 0
 
 
 def _row_to_job(row: sqlite3.Row) -> Dict:

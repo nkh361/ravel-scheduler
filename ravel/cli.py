@@ -86,6 +86,59 @@ def queue():
     list_jobs()
 
 @main.command()
+@click.option("--queued", "only_queued", is_flag=True, help="Clear only queued jobs")
+@click.option("--all", "all_jobs", is_flag=True, help="Clear all jobs (dangerous)")
+@click.option("-y", "--yes", is_flag=True, help="Skip confirmation")
+def clear(only_queued: bool, all_jobs: bool, yes: bool):
+    """Clear queued jobs or all jobs"""
+    from .store import clear_jobs
+
+    if all_jobs and only_queued:
+        console.print("[red]Choose only one of --all or --queued[/]")
+        return
+
+    if all_jobs:
+        if not yes and not click.confirm("Clear ALL jobs? This cannot be undone."):
+            return
+        deleted = clear_jobs()
+        console.print(f"[yellow]Cleared {deleted} jobs.[/]")
+        return
+
+    deleted = clear_jobs(["queued"])
+    console.print(f"[green]Cleared {deleted} queued jobs.[/]")
+
+@main.command()
+@click.argument("job_id")
+def stop(job_id: str):
+    """Stop a running job by ID"""
+    from .store import get_job, set_job_finished
+    import psutil
+
+    job = get_job(job_id)
+    if not job:
+        console.print("[red]Job not found.[/]")
+        return
+    if job["status"] != "running":
+        console.print(f"[yellow]Job {job_id} is not running (status={job['status']}).[/]")
+        return
+    pid = job.get("pid")
+    if not pid:
+        console.print(f"[red]Job {job_id} has no PID recorded.[/]")
+        return
+    try:
+        proc = psutil.Process(pid)
+        proc.terminate()
+        proc.wait(timeout=10)
+        set_job_finished(job_id, "stopped", -1, "", "terminated by user")
+        console.print(f"[yellow]Stopped {job_id}.[/]")
+    except psutil.NoSuchProcess:
+        set_job_finished(job_id, "stopped", -1, "", "process not found")
+        console.print(f"[yellow]Process for {job_id} not found. Marked stopped.[/]")
+    except psutil.TimeoutExpired:
+        proc.kill()
+        set_job_finished(job_id, "stopped", -1, "", "killed by user")
+        console.print(f"[yellow]Killed {job_id}.[/]")
+@main.command()
 @click.argument("file", type=click.Path(exists=True, dir_okay=False))
 @click.option("--gpus", "-g", default=1, help="Number of GPUs")
 @click.option("--priority", "-p", default=0, help="Higher runs first")
@@ -122,7 +175,7 @@ def submit(file: str, gpus: int, priority: int, memory_tag: Optional[str], no_wa
     name_to_id: dict[str, str] = {}
     submit_cwd = os.path.abspath(os.path.dirname(file))
     for entry in parsed_jobs:
-        cmd_list = ["/bin/bash", "-lc", entry["command"]]
+        cmd_list = _shell_command(entry["command"])
         job_id = add_job(
             cmd_list,
             gpus=entry["gpus"],
@@ -237,6 +290,12 @@ def _parse_submit_line(
         "name": name,
         "after": after,
     }
+
+
+def _shell_command(command: str) -> list[str]:
+    if os.name == "nt":
+        return ["powershell", "-NoProfile", "-Command", command]
+    return ["/bin/bash", "-lc", command]
 
 def _apply_ravelfile_set(line: str, defaults: dict) -> bool:
     parts = line.split(None, 2)
