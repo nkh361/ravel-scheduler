@@ -138,6 +138,33 @@ def stop(job_id: str):
         proc.kill()
         set_job_finished(job_id, "stopped", -1, "", "killed by user")
         console.print(f"[yellow]Killed {job_id}.[/]")
+
+@main.command()
+@click.argument("job_id")
+@click.option("--no-wait", is_flag=True, help="Enqueue and exit without waiting")
+def retry(job_id: str, no_wait: bool):
+    """Retry a job by ID (re-queues with same command and settings)"""
+    job = get_job(job_id)
+    if not job:
+        console.print("[red]Job not found.[/]")
+        return
+
+    new_job_id = add_job(
+        job["command"],
+        gpus=job.get("gpus", 1),
+        priority=job.get("priority", 0),
+        memory_tag=job.get("memory_tag"),
+        cwd=job.get("cwd"),
+    )
+
+    if not daemon_running():
+        start_daemon()
+
+    console.print(f"[green]Retried {job_id} → {new_job_id}[/]")
+    if no_wait:
+        return
+
+    _wait_for_job(new_job_id)
 @main.command()
 @click.argument("file", type=click.Path(exists=True, dir_okay=False))
 @click.option("--gpus", "-g", default=1, help="Number of GPUs")
