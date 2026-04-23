@@ -57,6 +57,8 @@ Fast, local GPU scheduler with a shared, cross-terminal job queue and daemon.
    - `ravel run --priority 10 "python3 path/to/script.py"` (higher runs first)
    - `ravel run --after <job_id> "python3 path/to/script.py"` (DAG dependency)
    - `ravel run --memory-tag large "python3 path/to/script.py"` (resource tag)
+   - `ravel run --timeout 3600 "python3 path/to/script.py"` (kill after 1 hour)
+   - `ravel run --retries 3 "python3 path/to/script.py"` (auto-retry up to 3 times on failure)
 2. List queued/running jobs:
    - `ravel queue`
 3. Watch jobs live from any terminal:

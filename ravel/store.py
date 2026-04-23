@@ -62,7 +62,10 @@ def _init_db(conn: sqlite3.Connection) -> None:
             returncode INTEGER,
             stdout TEXT,
             stderr TEXT,
-            retried_from TEXT
+            retried_from TEXT,
+            timeout INTEGER,
+            max_retries INTEGER NOT NULL DEFAULT 0,
+            retry_count INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS job_deps (
             job_id TEXT NOT NULL,
@@ -75,6 +78,9 @@ def _init_db(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "jobs", "cwd", "TEXT")
     _ensure_column(conn, "jobs", "pid", "INTEGER")
     _ensure_column(conn, "jobs", "retried_from", "TEXT")
+    _ensure_column(conn, "jobs", "timeout", "INTEGER")
+    _ensure_column(conn, "jobs", "max_retries", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "jobs", "retry_count", "INTEGER NOT NULL DEFAULT 0")
     conn.executescript(
         """
         CREATE INDEX IF NOT EXISTS idx_jobs_status_created
@@ -87,7 +93,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
             ON job_deps(depends_on);
         """
     )
-    _set_schema_version(conn, 2)
+    _set_schema_version(conn, 3)
 
 
 def _ensure_meta_table(conn: sqlite3.Connection) -> None:
@@ -131,6 +137,9 @@ def add_job(
     memory_tag: Optional[str] = None,
     cwd: Optional[str] = None,
     retried_from: Optional[str] = None,
+    timeout: Optional[int] = None,
+    max_retries: int = 0,
+    retry_count: int = 0,
 ) -> str:
     job_id = str(uuid.uuid4())[:8]
     created_at = datetime.now().isoformat(timespec="seconds")
@@ -138,8 +147,9 @@ def add_job(
         conn.execute(
             """
             INSERT INTO jobs (
-                id, command, gpus, priority, memory_tag, cwd, status, created_at, retried_from
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, command, gpus, priority, memory_tag, cwd, status, created_at,
+                retried_from, timeout, max_retries, retry_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -151,6 +161,9 @@ def add_job(
                 "queued",
                 created_at,
                 retried_from,
+                timeout,
+                max_retries,
+                retry_count,
             ),
         )
         if depends_on:

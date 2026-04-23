@@ -20,6 +20,15 @@ This guide explains how to install and use Ravel from the CLI, including common 
    - `ravel run --after <job_id> "python3 path/to/script.py"`
 5. Memory tags for resource limits:
    - `ravel run --memory-tag large "python3 path/to/script.py"`
+6. Job timeout (kill if it runs longer than N seconds):
+   - `ravel run --timeout 3600 "python3 path/to/script.py"`
+   - Timed-out jobs are marked `failed` with `stderr` containing `"timed out after Ns"`.
+   - Timeout is inherited when using `ravel retry`.
+7. Auto-retry on failure (re-queues automatically up to N times):
+   - `ravel run --retries 3 "python3 path/to/script.py"`
+   - Each auto-retry increments `retry_count`; retries stop when `retry_count == max_retries`.
+   - Works for both execution failures (non-zero exit) and timeouts.
+   - Each retry job records the previous job ID in `retried_from`.
 6. List queued and running jobs:
    - `ravel queue`
 7. Live dashboard (watch running jobs):
@@ -50,11 +59,12 @@ This guide explains how to install and use Ravel from the CLI, including common 
 14. Submit a batch file (Ravelfile or jobs.txt):
    - `ravel submit Ravelfile --no-wait`
    - `ravel submit jobs.txt --no-wait`
+   - `ravel submit Ravelfile --timeout 1800 --retries 2` (global defaults for all jobs)
    - Each line is executed as-is via `/bin/bash -lc` (no re-quoting).
    - Ravelfile format:
      - `JOB <command>`
-     - `SET PRIORITY <value>`, `SET GPUS <value>`, `SET MEMORY <value>`
-     - Inline metadata: `JOB name=... priority=... gpus=... memory=... after=... -- <command>`
+     - `SET PRIORITY <value>`, `SET GPUS <value>`, `SET MEMORY <value>`, `SET TIMEOUT <seconds>`, `SET RETRIES <n>`
+     - Inline metadata: `JOB name=... priority=... gpus=... memory=... timeout=... retries=... after=... -- <command>`
    - `after=` can reference `name=` entries or existing job IDs.
    - Relative paths resolve from the directory containing the batch file.
    - Heredocs are supported (lines are grouped until the heredoc terminator).

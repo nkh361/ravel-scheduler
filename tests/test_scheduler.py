@@ -29,7 +29,7 @@ def _make_fake_proc_factory(calls):
             self._stdout_file = kwargs.get("stdout")
             self.returncode = 0
 
-        def wait(self):
+        def wait(self, timeout=None):
             calls.append(self._cmd)
             if hasattr(self._stdout_file, "write"):
                 self._stdout_file.write("")
@@ -54,7 +54,7 @@ def test_job_gets_executed(monkeypatch, tmp_path):
             self._stdout_file = kwargs.get("stdout")
             self.returncode = 0
 
-        def wait(self):
+        def wait(self, timeout=None):
             calls.append(self._cmd)
             if hasattr(self._stdout_file, "write"):
                 self._stdout_file.write("")
@@ -88,7 +88,7 @@ def test_priority_fifo_order(monkeypatch, tmp_path):
             self._stdout_file = kwargs.get("stdout")
             self.returncode = 0
 
-        def wait(self):
+        def wait(self, timeout=None):
             calls.append(self._cmd)
             if hasattr(self._stdout_file, "write"):
                 self._stdout_file.write("")
@@ -130,7 +130,7 @@ def test_dag_dependency(monkeypatch, tmp_path):
             self._stdout_file = kwargs.get("stdout")
             self.returncode = 0
 
-        def wait(self):
+        def wait(self, timeout=None):
             calls.append(self._cmd)
             if hasattr(self._stdout_file, "write"):
                 self._stdout_file.write("")
@@ -167,7 +167,7 @@ def test_memory_tag_limits(monkeypatch, tmp_path):
             self._stdout_file = kwargs.get("stdout")
             self.returncode = 0
 
-        def wait(self):
+        def wait(self, timeout=None):
             calls.append(self._cmd)
             if hasattr(self._stdout_file, "write"):
                 self._stdout_file.write("")
@@ -504,7 +504,7 @@ def test_job_output_written_to_log_file(monkeypatch, tmp_path):
             self._stdout_file = kwargs.get("stdout")
             self.returncode = 0
 
-        def wait(self):
+        def wait(self, timeout=None):
             if hasattr(self._stdout_file, "write"):
                 self._stdout_file.write("job output line\n")
             return 0
@@ -523,3 +523,232 @@ def test_job_output_written_to_log_file(monkeypatch, tmp_path):
     job = get_job(job_id)
     assert job["status"] == "done"
     assert "job output line" in job["stdout"]
+
+
+# ---------------------------------------------------------------------------
+# Job timeouts
+# ---------------------------------------------------------------------------
+
+def test_job_timeout_marks_failed(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_NO_GPU", "1")
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setenv("RAVEL_STATE_DIR", str(tmp_path))
+
+    clear_jobs_for_tests()
+
+    class FakeProcTimeout:
+        def __init__(self, cmd, **kwargs):
+            self.pid = 12345
+            self._cmd = cmd
+            self._stdout_file = kwargs.get("stdout")
+            self.returncode = None
+
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise subprocess.TimeoutExpired(self._cmd, timeout)
+            return -9
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProcTimeout(cmd, **kwargs))
+
+    job_id = add_job(["sleep", "999"], gpus=1, timeout=5)
+    run_once(inline=True)
+
+    job = get_job(job_id)
+    assert job["status"] == "failed"
+    assert "timed out after 5s" in job["stderr"]
+
+
+def test_job_without_timeout_not_killed(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_NO_GPU", "1")
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setenv("RAVEL_STATE_DIR", str(tmp_path))
+
+    clear_jobs_for_tests()
+
+    class FakeProc:
+        def __init__(self, cmd, **kwargs):
+            self.pid = 12345
+            self._cmd = cmd
+            self._stdout_file = kwargs.get("stdout")
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            if hasattr(self._stdout_file, "write"):
+                self._stdout_file.write("")
+            return 0
+
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProc(cmd, **kwargs))
+
+    job_id = add_job(["echo", "ok"], gpus=1)  # no timeout
+    run_once(inline=True)
+
+    assert get_job(job_id)["status"] == "done"
+
+
+def test_timeout_inherited_by_retry(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setattr("ravel.cli.daemon_running", lambda: True)
+
+    clear_jobs_for_tests()
+
+    job_id = add_job(["sleep", "999"], gpus=1, timeout=30)
+    set_job_finished(job_id, "failed", None, "", "timed out after 30s")
+
+    result = CliRunner().invoke(cli_main, ["retry", job_id, "--no-wait"])
+    assert result.exit_code == 0
+
+    new_jobs = [j for j in list_jobs() if j["id"] != job_id]
+    assert len(new_jobs) == 1
+    assert new_jobs[0]["timeout"] == 30
+
+
+# ---------------------------------------------------------------------------
+# Auto-retry on failure
+# ---------------------------------------------------------------------------
+
+def _make_fake_proc_fail_factory(calls):
+    class FakeProcFail:
+        def __init__(self, cmd, **kwargs):
+            self.pid = 12345
+            self._cmd = cmd
+            self._stdout_file = kwargs.get("stdout")
+            self.returncode = 1
+
+        def wait(self, timeout=None):
+            calls.append(self._cmd)
+            if hasattr(self._stdout_file, "write"):
+                self._stdout_file.write("")
+            return 1
+
+    return lambda cmd, **kwargs: FakeProcFail(cmd, **kwargs)
+
+
+def test_auto_retry_creates_new_job_on_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_NO_GPU", "1")
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setenv("RAVEL_STATE_DIR", str(tmp_path))
+
+    clear_jobs_for_tests()
+
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _make_fake_proc_fail_factory(calls))
+
+    job_id = add_job(["echo", "fail"], gpus=1, max_retries=2)
+    run_once(inline=True)
+
+    job = get_job(job_id)
+    assert job["status"] == "failed"
+
+    queued = list_jobs(["queued"])
+    assert len(queued) == 1
+    retry_job = queued[0]
+    assert retry_job["retried_from"] == job_id
+    assert retry_job["retry_count"] == 1
+    assert retry_job["max_retries"] == 2
+
+
+def test_auto_retry_exhausts_after_max_retries(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_NO_GPU", "1")
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setenv("RAVEL_STATE_DIR", str(tmp_path))
+
+    clear_jobs_for_tests()
+
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _make_fake_proc_fail_factory(calls))
+
+    add_job(["echo", "fail"], gpus=1, max_retries=2)
+
+    run_once(inline=True)  # attempt 1 → fails, queues attempt 2
+    run_once(inline=True)  # attempt 2 → fails, queues attempt 3
+    run_once(inline=True)  # attempt 3 → fails, no more retries
+
+    assert len(calls) == 3
+    assert list_jobs(["queued"]) == []
+    all_jobs = list_jobs()
+    assert all(j["status"] == "failed" for j in all_jobs)
+
+
+def test_auto_retry_stops_on_success(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_NO_GPU", "1")
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setenv("RAVEL_STATE_DIR", str(tmp_path))
+
+    clear_jobs_for_tests()
+
+    attempt = [0]
+
+    class FakeProcFlaky:
+        def __init__(self, cmd, **kwargs):
+            self.pid = 12345
+            self._cmd = cmd
+            self._stdout_file = kwargs.get("stdout")
+
+        def wait(self, timeout=None):
+            attempt[0] += 1
+            if hasattr(self._stdout_file, "write"):
+                self._stdout_file.write("")
+            # fail first attempt, succeed second
+            return 1 if attempt[0] == 1 else 0
+
+        @property
+        def returncode(self):
+            return 1 if attempt[0] == 1 else 0
+
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProcFlaky(cmd, **kwargs))
+
+    add_job(["echo", "flaky"], gpus=1, max_retries=3)
+
+    run_once(inline=True)  # fails → auto-retry queued
+    run_once(inline=True)  # succeeds → no more retries
+
+    assert list_jobs(["queued"]) == []
+    done = list_jobs(["done"])
+    assert len(done) == 1
+    assert done[0]["retry_count"] == 1
+
+
+def test_auto_retry_on_timeout(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_NO_GPU", "1")
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setenv("RAVEL_STATE_DIR", str(tmp_path))
+
+    clear_jobs_for_tests()
+
+    class FakeProcTimeout:
+        def __init__(self, cmd, **kwargs):
+            self.pid = 12345
+            self._cmd = cmd
+            self._stdout_file = kwargs.get("stdout")
+            self.returncode = None
+
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise subprocess.TimeoutExpired(self._cmd, timeout)
+            return -9
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProcTimeout(cmd, **kwargs))
+
+    job_id = add_job(["sleep", "999"], gpus=1, timeout=5, max_retries=1)
+    run_once(inline=True)
+
+    assert get_job(job_id)["status"] == "failed"
+
+    queued = list_jobs(["queued"])
+    assert len(queued) == 1
+    assert queued[0]["retried_from"] == job_id
+    assert queued[0]["timeout"] == 5
+    assert queued[0]["retry_count"] == 1

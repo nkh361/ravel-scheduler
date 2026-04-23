@@ -17,6 +17,8 @@ def add_job(
     memory_tag: Optional[str] = None,
     cwd: Optional[str] = None,
     retried_from: Optional[str] = None,
+    timeout: Optional[int] = None,
+    max_retries: int = 0,
 ) -> str:
     job_id = _add_job(
         command,
@@ -26,6 +28,8 @@ def add_job(
         memory_tag=memory_tag,
         cwd=cwd,
         retried_from=retried_from,
+        timeout=timeout,
+        max_retries=max_retries,
     )
     if not DASHBOARD_MODE:
         console.print(

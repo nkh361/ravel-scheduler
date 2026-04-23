@@ -24,6 +24,8 @@ def main():
     help="Job ID(s) that must finish before this runs (repeatable)",
 )
 @click.option("--memory-tag", "--mem", default=None, help="Memory tag for limits")
+@click.option("--timeout", "-t", default=None, type=int, help="Kill job after this many seconds")
+@click.option("--retries", default=0, type=int, help="Auto-retry on failure up to N times")
 @click.option("--dash", is_flag=True, help="Display the dashboard")
 @click.option(
     "--no-wait",
@@ -36,6 +38,8 @@ def run(
     priority: int,
     after: tuple[str],
     memory_tag: Optional[str],
+    timeout: Optional[int],
+    retries: int,
     dash: bool,
     no_wait: bool,
 ):
@@ -62,6 +66,8 @@ def run(
         depends_on=depends_on,
         memory_tag=memory_tag,
         cwd=os.getcwd(),
+        timeout=timeout,
+        max_retries=retries,
     )
 
     if not daemon_running():
@@ -247,6 +253,7 @@ def retry(job_id: str, no_wait: bool):
         memory_tag=job.get("memory_tag"),
         cwd=job.get("cwd"),
         retried_from=job_id,
+        timeout=job.get("timeout"),
     )
 
     if not daemon_running():
@@ -262,8 +269,10 @@ def retry(job_id: str, no_wait: bool):
 @click.option("--gpus", "-g", default=1, help="Number of GPUs")
 @click.option("--priority", "-p", default=0, help="Higher runs first")
 @click.option("--memory-tag", "--mem", default=None, help="Memory tag for limits")
+@click.option("--timeout", "-t", default=None, type=int, help="Kill each job after this many seconds")
+@click.option("--retries", default=0, type=int, help="Auto-retry each job on failure up to N times")
 @click.option("--no-wait", is_flag=True, help="Enqueue jobs and exit immediately")
-def submit(file: str, gpus: int, priority: int, memory_tag: Optional[str], no_wait: bool):
+def submit(file: str, gpus: int, priority: int, memory_tag: Optional[str], timeout: Optional[int], retries: int, no_wait: bool):
     """Submit a batch of jobs from a text file"""
     from .store import add_dependencies
 
@@ -274,6 +283,8 @@ def submit(file: str, gpus: int, priority: int, memory_tag: Optional[str], no_wa
         "gpus": gpus,
         "priority": priority,
         "memory_tag": memory_tag,
+        "timeout": timeout,
+        "max_retries": retries,
     }
 
     jobs = _collect_submit_jobs(lines, defaults)
@@ -286,7 +297,7 @@ def submit(file: str, gpus: int, priority: int, memory_tag: Optional[str], no_wa
         start_daemon()
 
     parsed_jobs = [
-        _parse_submit_line(raw, defaults["gpus"], defaults["priority"], defaults["memory_tag"])
+        _parse_submit_line(raw, defaults["gpus"], defaults["priority"], defaults["memory_tag"], defaults["timeout"], defaults["max_retries"])
         for raw in jobs
     ]
 
@@ -301,6 +312,8 @@ def submit(file: str, gpus: int, priority: int, memory_tag: Optional[str], no_wa
             priority=entry["priority"],
             memory_tag=entry["memory_tag"],
             cwd=submit_cwd,
+            timeout=entry["timeout"],
+            max_retries=entry["max_retries"],
         )
         job_ids.append(job_id)
         if entry["name"]:
@@ -362,6 +375,8 @@ def _parse_submit_line(
     default_gpus: int,
     default_priority: int,
     default_memory_tag: Optional[str],
+    default_timeout: Optional[int] = None,
+    default_max_retries: int = 0,
 ) -> dict:
     if " -- " in raw:
         meta, command = raw.split(" -- ", 1)
@@ -373,6 +388,8 @@ def _parse_submit_line(
     gpus = default_gpus
     priority = default_priority
     memory_tag = default_memory_tag
+    timeout = default_timeout
+    max_retries = default_max_retries
     name = None
     after: list[str] = []
 
@@ -400,12 +417,24 @@ def _parse_submit_line(
                 name = value or None
             elif key in {"after", "depends"}:
                 after = [v.strip() for v in value.split(",") if v.strip()]
+            elif key == "timeout":
+                try:
+                    timeout = int(value)
+                except ValueError:
+                    pass
+            elif key in {"retries", "max_retries"}:
+                try:
+                    max_retries = int(value)
+                except ValueError:
+                    pass
 
     return {
         "command": command,
         "gpus": gpus,
         "priority": priority,
         "memory_tag": memory_tag,
+        "timeout": timeout,
+        "max_retries": max_retries,
         "name": name,
         "after": after,
     }
@@ -434,6 +463,16 @@ def _apply_ravelfile_set(line: str, defaults: dict) -> bool:
             return False
     elif key in {"memory", "mem", "memory_tag"}:
         defaults["memory_tag"] = value or None
+    elif key == "timeout":
+        try:
+            defaults["timeout"] = int(value)
+        except ValueError:
+            return False
+    elif key in {"retries", "max_retries"}:
+        try:
+            defaults["max_retries"] = int(value)
+        except ValueError:
+            return False
     else:
         return False
     return True

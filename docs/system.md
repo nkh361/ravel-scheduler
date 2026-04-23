@@ -21,7 +21,9 @@ Ravel is a lightweight local scheduler with three main components:
    - Executes the command, writing stdout and stderr live to `~/.ravel/logs/<job_id>.log`.
    - Stores the full output in the database when the process exits.
 3. The job finishes with `done` or `failed` and includes stdout/stderr.
-4. Failed or stopped jobs can be re-queued with `ravel retry <job_id>`; the new job records the original ID in `retried_from`.
+4. If `timeout` is set, `proc.wait(timeout=N)` raises `subprocess.TimeoutExpired`; the process is killed and the job is marked `failed` with a timeout message in `stderr`.
+5. If `retry_count < max_retries` after a failure (or timeout), the daemon automatically queues a new job with `retry_count + 1`.
+6. Failed or stopped jobs can also be re-queued manually with `ravel retry <job_id>`; the new job records the original ID in `retried_from`.
 
 ## Data Model (SQLite)
 Table: `jobs`
@@ -36,7 +38,10 @@ Key fields:
 7. `created_at`, `started_at`, `finished_at` (timestamps).
 8. `gpus_assigned` (json): List of GPU indices assigned.
 9. `returncode`, `stdout`, `stderr`.
-10. `retried_from` (string): ID of the original job if this job was created by `ravel retry`.
+10. `retried_from` (string): ID of the preceding job if created by `ravel retry` or auto-retry.
+11. `timeout` (int, nullable): Seconds before the daemon kills the process; `NULL` means no limit.
+12. `max_retries` (int, default 0): How many times the daemon will auto-requeue on failure.
+13. `retry_count` (int, default 0): How many auto-retries have been attempted so far.
 
 Table: `job_deps`
 1. `job_id` (string): The dependent job.

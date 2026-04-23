@@ -65,3 +65,5 @@ Goal: Run a sweep without saturating GPUs.
 Tips:
 1. Ravel will only start a job when enough GPUs are available.
 2. Keep `ravel queue` open when tuning sweep size.
+3. Add `--retries 2` so transient failures (OOM, NCCL errors) auto-recover without manual intervention.
+4. Add `--timeout 7200` to prevent a stuck run from blocking GPUs indefinitely.

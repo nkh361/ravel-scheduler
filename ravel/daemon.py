@@ -7,6 +7,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Optional
 
 from .store import (
+    add_job,
     db_path,
     get_job,
     list_jobs,
@@ -166,6 +167,9 @@ def _run_job(job_id: str, gpus_assigned: list[int]) -> None:
     log_path = job_log_path(job_id)
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
+    timeout = job.get("timeout")
+    timed_out = False
+
     try:
         with open(log_path, "w", buffering=1) as log_file:
             proc = subprocess.Popen(
@@ -178,13 +182,25 @@ def _run_job(job_id: str, gpus_assigned: list[int]) -> None:
                 env=env,
             )
             set_job_pid(job_id, proc.pid)
-            returncode = proc.wait()
+            try:
+                returncode = proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                timed_out = True
+                returncode = None
 
         with open(log_path) as f:
             output = f.read()
-        status = "done" if returncode == 0 else "failed"
-        stdout = output
-        stderr = ""
+
+        if timed_out:
+            status = "failed"
+            stdout = output
+            stderr = f"timed out after {timeout}s"
+        else:
+            status = "done" if returncode == 0 else "failed"
+            stdout = output
+            stderr = ""
     except Exception as exc:
         status = "failed"
         stdout = ""
@@ -198,6 +214,22 @@ def _run_job(job_id: str, gpus_assigned: list[int]) -> None:
         stdout=stdout,
         stderr=stderr,
     )
+
+    if status == "failed":
+        retry_count = job.get("retry_count", 0)
+        max_retries = job.get("max_retries", 0)
+        if retry_count < max_retries:
+            add_job(
+                job["command"],
+                gpus=job["gpus"],
+                priority=job["priority"],
+                memory_tag=job.get("memory_tag"),
+                cwd=job.get("cwd"),
+                retried_from=job_id,
+                timeout=job.get("timeout"),
+                max_retries=max_retries,
+                retry_count=retry_count + 1,
+            )
 
 def _ensure_stdio() -> None:
     for fd, mode in ((0, os.O_RDONLY), (1, os.O_WRONLY), (2, os.O_WRONLY)):
