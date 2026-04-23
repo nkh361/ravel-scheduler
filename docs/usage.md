@@ -33,14 +33,21 @@ This guide explains how to install and use Ravel from the CLI, including common 
    - `ravel logs --failed`
    - `ravel logs --passed`
    - `ravel logs --status queued,running,blocked`
-10. Clear jobs:
-   - `ravel clear` (clears queued jobs)
-   - `ravel clear --all` (clears all jobs)
-11. Stop a running job:
-   - `ravel stop <job_id>`
-12. Retry a job:
-   - `ravel retry <job_id>`
-13. Submit a batch file (Ravelfile or jobs.txt):
+10. Stream live output from a job (like `tail -f`):
+    - `ravel tail <job_id>` — snapshot of current output
+    - `ravel tail --follow <job_id>` — stream live until job finishes; Ctrl+C to detach
+    - Works on running, done, and failed jobs. Queued jobs show a "not started" message.
+    - Output is written to `~/.ravel/logs/<job_id>.log` and streamed directly from that file.
+11. Clear jobs:
+    - `ravel clear` (clears queued jobs)
+    - `ravel clear --all` (clears all jobs)
+12. Stop a running job:
+    - `ravel stop <job_id>`
+13. Retry a failed or stopped job:
+    - `ravel retry <job_id>` — re-queues with the same command, GPUs, priority, memory tag, and dependencies
+    - `ravel retry --no-wait <job_id>` — enqueue and exit without waiting
+    - The new job records which job it was retried from (`retried_from` field).
+14. Submit a batch file (Ravelfile or jobs.txt):
    - `ravel submit Ravelfile --no-wait`
    - `ravel submit jobs.txt --no-wait`
    - Each line is executed as-is via `/bin/bash -lc` (no re-quoting).
@@ -52,7 +59,7 @@ This guide explains how to install and use Ravel from the CLI, including common 
    - Relative paths resolve from the directory containing the batch file.
    - Heredocs are supported (lines are grouped until the heredoc terminator).
    - On Windows (PowerShell), commands run via `powershell -NoProfile -Command`.
-14. Validate a Ravelfile/jobs file:
+15. Validate a Ravelfile/jobs file:
    - `ravel validate Ravelfile`
 
 ## Daemon Controls

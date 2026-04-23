@@ -19,6 +19,8 @@ Goal: Run multiple backfill jobs that each need a GPU or CPU slot, while trackin
 Tips:
 1. Use `--no-wait` to enqueue quickly from a deploy or tmux session.
 2. Run the dashboard in a dedicated monitoring window.
+3. Use `ravel tail --follow <job_id>` to watch a specific job's live output from any terminal.
+4. If a backfill job fails, use `ravel retry <job_id>` to re-queue it with the same settings.
 
 ## Workflow 2: Model Training + Evaluation
 Goal: Kick off a long training job, then enqueue evaluation or ablation runs.
@@ -33,7 +35,8 @@ Goal: Kick off a long training job, then enqueue evaluation or ablation runs.
 
 Tips:
 1. Run `ravel queue` to see if eval jobs are queued while the training job is running.
-2. Use separate terminals for run, monitor, and log tailing.
+2. Use `ravel tail --follow <job_id>` in a dedicated terminal to watch training loss in real time.
+3. If training fails mid-run, use `ravel retry <job_id>` to re-queue it without re-typing the command.
 
 ## Workflow 3: Feature Generation + GPU Inference
 Goal: Batch-generate embeddings and feed them into downstream jobs.

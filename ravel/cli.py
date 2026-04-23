@@ -141,6 +141,87 @@ def stop(job_id: str):
 
 @main.command()
 @click.argument("job_id")
+@click.option("--follow", "-f", is_flag=True, help="Stream live output (like tail -f)")
+def tail(job_id: str, follow: bool):
+    """Show the output of a job; --follow streams live like tail -f"""
+    from .daemon import job_log_path
+
+    job = get_job(job_id)
+    if not job:
+        console.print("[red]Job not found.[/]")
+        return
+
+    status = job["status"]
+    log_path = job_log_path(job_id)
+
+    if status in {"done", "failed", "stopped"}:
+        if os.path.exists(log_path):
+            with open(log_path) as f:
+                content = f.read()
+            if content:
+                print(content, end="")
+        elif job.get("stdout"):
+            print(job["stdout"], end="")
+        return
+
+    if status in {"queued", "blocked"} and not follow:
+        console.print(f"[yellow]Job {job_id} has not started yet (status={status}).[/]")
+        return
+
+    if follow and status in {"queued", "blocked"}:
+        console.print(f"[dim]Waiting for {job_id} to start (Ctrl+C to cancel)...[/]")
+        try:
+            while True:
+                time.sleep(0.5)
+                job = get_job(job_id)
+                if not job:
+                    return
+                status = job["status"]
+                if status == "running":
+                    break
+                if status in {"done", "failed", "stopped"}:
+                    console.print(f"[yellow]Job {job_id} ended with status={status}.[/]")
+                    return
+        except KeyboardInterrupt:
+            return
+
+    if not follow:
+        if os.path.exists(log_path):
+            with open(log_path) as f:
+                print(f.read(), end="")
+        else:
+            console.print(f"[dim]No output yet for {job_id}.[/]")
+        return
+
+    console.print(f"[dim]Streaming {job_id} (Ctrl+C to stop)...[/]")
+    deadline = time.time() + 10
+    while not os.path.exists(log_path) and time.time() < deadline:
+        time.sleep(0.1)
+
+    if not os.path.exists(log_path):
+        console.print(f"[yellow]Log file not ready for {job_id}.[/]")
+        return
+
+    try:
+        with open(log_path) as f:
+            while True:
+                line = f.readline()
+                if line:
+                    print(line, end="", flush=True)
+                else:
+                    current_job = get_job(job_id)
+                    if not current_job or current_job["status"] != "running":
+                        remaining = f.read()
+                        if remaining:
+                            print(remaining, end="", flush=True)
+                        break
+                    time.sleep(0.1)
+    except KeyboardInterrupt:
+        pass
+
+
+@main.command()
+@click.argument("job_id")
 @click.option("--no-wait", is_flag=True, help="Enqueue and exit without waiting")
 def retry(job_id: str, no_wait: bool):
     """Retry a failed or stopped job (re-queues with same command, settings, and dependencies)"""

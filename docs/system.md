@@ -18,8 +18,10 @@ Ravel is a lightweight local scheduler with three main components:
    - Selects the next queued job.
    - Checks GPU availability.
    - Atomically claims the job (marks it as running).
-   - Executes the command and stores results.
+   - Executes the command, writing stdout and stderr live to `~/.ravel/logs/<job_id>.log`.
+   - Stores the full output in the database when the process exits.
 3. The job finishes with `done` or `failed` and includes stdout/stderr.
+4. Failed or stopped jobs can be re-queued with `ravel retry <job_id>`; the new job records the original ID in `retried_from`.
 
 ## Data Model (SQLite)
 Table: `jobs`
@@ -30,14 +32,18 @@ Key fields:
 3. `gpus` (int): Number of GPUs requested.
 4. `priority` (int): Higher runs first.
 5. `memory_tag` (string): Used with `RAVEL_MEMORY_LIMITS`.
-6. `status` (string): `queued`, `running`, `done`, `failed`, `blocked`.
+6. `status` (string): `queued`, `running`, `done`, `failed`, `blocked`, `stopped`.
 7. `created_at`, `started_at`, `finished_at` (timestamps).
 8. `gpus_assigned` (json): List of GPU indices assigned.
 9. `returncode`, `stdout`, `stderr`.
+10. `retried_from` (string): ID of the original job if this job was created by `ravel retry`.
 
 Table: `job_deps`
 1. `job_id` (string): The dependent job.
 2. `depends_on` (string): A prerequisite job ID.
+
+## Live Log Files
+While a job is running, its stdout and stderr are written in real time to `~/.ravel/logs/<job_id>.log` (both streams are merged into one file). This powers `ravel tail --follow`. After the job finishes, the full log is also stored in the `stdout` column of the `jobs` table so it is accessible even if the log file is deleted.
 
 ## GPU Scheduling
 `ravel/utils.py` contains `get_free_gpus()` which uses `nvidia-smi` to find GPUs with < 20% utilization. If `RAVEL_NO_GPU=1`, it returns mock GPU availability.

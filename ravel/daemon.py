@@ -25,6 +25,10 @@ def _state_dir() -> str:
         os.path.join(os.path.expanduser("~"), ".ravel"),
     )
 
+
+def job_log_path(job_id: str) -> str:
+    return os.path.join(_state_dir(), "logs", f"{job_id}.log")
+
 def _pid_path() -> str:
     return os.path.join(_state_dir(), "daemon.pid")
 
@@ -159,21 +163,28 @@ def _run_job(job_id: str, gpus_assigned: list[int]) -> None:
     env = os.environ.copy()
     env["NVIDIA_VISIBLE_DEVICES"] = ",".join(map(str, gpus_assigned))
 
+    log_path = job_log_path(job_id)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+
     try:
-        proc = subprocess.Popen(
-            job["command"],
-            shell=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=job.get("cwd") or None,
-            env=env,
-        )
-        set_job_pid(job_id, proc.pid)
-        stdout, stderr = proc.communicate()
-        returncode = proc.returncode
+        with open(log_path, "w", buffering=1) as log_file:
+            proc = subprocess.Popen(
+                job["command"],
+                shell=False,
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=log_file,
+                cwd=job.get("cwd") or None,
+                env=env,
+            )
+            set_job_pid(job_id, proc.pid)
+            returncode = proc.wait()
+
+        with open(log_path) as f:
+            output = f.read()
         status = "done" if returncode == 0 else "failed"
+        stdout = output
+        stderr = ""
     except Exception as exc:
         status = "failed"
         stdout = ""

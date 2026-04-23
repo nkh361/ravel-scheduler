@@ -1,10 +1,13 @@
+import os
 import subprocess
+import threading
+import time
 
 from click.testing import CliRunner
 
 from ravel.cli import _collect_submit_jobs, _parse_submit_line
 from ravel.cli import main as cli_main
-from ravel.daemon import run_once
+from ravel.daemon import job_log_path, run_once
 from ravel.store import (
     add_job,
     clear_jobs_for_tests,
@@ -14,7 +17,26 @@ from ravel.store import (
     list_recent_jobs,
     mark_blocked_jobs_due_to_failed_deps,
     set_job_finished,
+    try_claim_job,
 )
+
+
+def _make_fake_proc_factory(calls):
+    class FakeProc:
+        def __init__(self, cmd, **kwargs):
+            self.pid = 12345
+            self._cmd = cmd
+            self._stdout_file = kwargs.get("stdout")
+            self.returncode = 0
+
+        def wait(self):
+            calls.append(self._cmd)
+            if hasattr(self._stdout_file, "write"):
+                self._stdout_file.write("")
+            return 0
+
+    return lambda cmd, **kwargs: FakeProc(cmd, **kwargs)
+
 
 def test_job_gets_executed(monkeypatch, tmp_path):
     monkeypatch.setenv("RAVEL_NO_GPU", "1")
@@ -26,16 +48,19 @@ def test_job_gets_executed(monkeypatch, tmp_path):
     calls = []
 
     class FakeProc:
-        def __init__(self, cmd):
+        def __init__(self, cmd, **kwargs):
             self.pid = 12345
             self._cmd = cmd
+            self._stdout_file = kwargs.get("stdout")
             self.returncode = 0
 
-        def communicate(self):
+        def wait(self):
             calls.append(self._cmd)
-            return "", ""
+            if hasattr(self._stdout_file, "write"):
+                self._stdout_file.write("")
+            return 0
 
-    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProc(cmd))
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProc(cmd, **kwargs))
 
     job_id = add_job(["echo", "hello", "ravel"], gpus=1)
     run_once(inline=True)
@@ -57,16 +82,19 @@ def test_priority_fifo_order(monkeypatch, tmp_path):
     calls = []
 
     class FakeProc:
-        def __init__(self, cmd):
+        def __init__(self, cmd, **kwargs):
             self.pid = 12345
             self._cmd = cmd
+            self._stdout_file = kwargs.get("stdout")
             self.returncode = 0
 
-        def communicate(self):
+        def wait(self):
             calls.append(self._cmd)
-            return "", ""
+            if hasattr(self._stdout_file, "write"):
+                self._stdout_file.write("")
+            return 0
 
-    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProc(cmd))
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProc(cmd, **kwargs))
 
     job_low = add_job(["echo", "low"], gpus=1, priority=0)
     job_high_a = add_job(["echo", "high-a"], gpus=1, priority=10)
@@ -96,16 +124,19 @@ def test_dag_dependency(monkeypatch, tmp_path):
     calls = []
 
     class FakeProc:
-        def __init__(self, cmd):
+        def __init__(self, cmd, **kwargs):
             self.pid = 12345
             self._cmd = cmd
+            self._stdout_file = kwargs.get("stdout")
             self.returncode = 0
 
-        def communicate(self):
+        def wait(self):
             calls.append(self._cmd)
-            return "", ""
+            if hasattr(self._stdout_file, "write"):
+                self._stdout_file.write("")
+            return 0
 
-    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProc(cmd))
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProc(cmd, **kwargs))
 
     job_a = add_job(["echo", "a"], gpus=1)
     job_b = add_job(["echo", "b"], gpus=1, depends_on=[job_a])
@@ -130,16 +161,19 @@ def test_memory_tag_limits(monkeypatch, tmp_path):
     calls = []
 
     class FakeProc:
-        def __init__(self, cmd):
+        def __init__(self, cmd, **kwargs):
             self.pid = 12345
             self._cmd = cmd
+            self._stdout_file = kwargs.get("stdout")
             self.returncode = 0
 
-        def communicate(self):
+        def wait(self):
             calls.append(self._cmd)
-            return "", ""
+            if hasattr(self._stdout_file, "write"):
+                self._stdout_file.write("")
+            return 0
 
-    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProc(cmd))
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProc(cmd, **kwargs))
 
     job_a = add_job(["echo", "large-a"], gpus=1, memory_tag="large")
     job_b = add_job(["echo", "large-b"], gpus=1, memory_tag="large")
@@ -210,19 +244,9 @@ def test_ravelfile_parsing_defaults_and_heredoc():
     assert parsed["after"] == ["seed"]
 
 
-def _make_fake_proc_factory(calls):
-    class FakeProc:
-        def __init__(self, cmd):
-            self.pid = 12345
-            self._cmd = cmd
-            self.returncode = 0
-
-        def communicate(self):
-            calls.append(self._cmd)
-            return "", ""
-
-    return lambda cmd, **kwargs: FakeProc(cmd)
-
+# ---------------------------------------------------------------------------
+# Retry logic
+# ---------------------------------------------------------------------------
 
 def test_retry_failed_job_queues_new_job(monkeypatch, tmp_path):
     monkeypatch.setenv("RAVEL_TEST_MODE", "1")
@@ -346,3 +370,156 @@ def test_retry_job_executes_and_succeeds(monkeypatch, tmp_path):
     assert new["status"] == "done"
     assert new["retried_from"] == job_id
     assert calls == [["echo", "retry-me"]]
+
+
+# ---------------------------------------------------------------------------
+# Live log streaming (ravel tail)
+# ---------------------------------------------------------------------------
+
+def test_tail_nonexistent_job(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+
+    clear_jobs_for_tests()
+
+    result = CliRunner().invoke(cli_main, ["tail", "deadbeef"])
+
+    assert result.exit_code == 0
+    assert "not found" in result.output.lower()
+
+
+def test_tail_queued_job_says_not_started(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+
+    clear_jobs_for_tests()
+
+    job_id = add_job(["echo", "waiting"], gpus=1)
+    result = CliRunner().invoke(cli_main, ["tail", job_id])
+
+    assert result.exit_code == 0
+    assert "not started" in result.output.lower()
+
+
+def test_tail_finished_job_shows_log_file(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setenv("RAVEL_STATE_DIR", str(tmp_path))
+
+    clear_jobs_for_tests()
+
+    job_id = add_job(["echo", "hello"], gpus=1)
+    set_job_finished(job_id, "done", 0, "hello world\n", "")
+
+    log_path = job_log_path(job_id)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    with open(log_path, "w") as f:
+        f.write("hello world\n")
+
+    result = CliRunner().invoke(cli_main, ["tail", job_id])
+
+    assert result.exit_code == 0
+    assert "hello world" in result.output
+
+
+def test_tail_finished_job_fallback_to_db(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setenv("RAVEL_STATE_DIR", str(tmp_path))
+
+    clear_jobs_for_tests()
+
+    job_id = add_job(["echo", "stored"], gpus=1)
+    set_job_finished(job_id, "done", 0, "stored output\n", "")
+
+    result = CliRunner().invoke(cli_main, ["tail", job_id])
+
+    assert result.exit_code == 0
+    assert "stored output" in result.output
+
+
+def test_tail_running_job_shows_snapshot(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setenv("RAVEL_STATE_DIR", str(tmp_path))
+
+    clear_jobs_for_tests()
+
+    job_id = add_job(["echo", "running"], gpus=1)
+    try_claim_job(job_id, [0])
+
+    log_path = job_log_path(job_id)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    with open(log_path, "w") as f:
+        f.write("partial output so far\n")
+
+    result = CliRunner().invoke(cli_main, ["tail", job_id])
+
+    assert result.exit_code == 0
+    assert "partial output so far" in result.output
+
+
+def test_tail_follow_streams_until_done(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setenv("RAVEL_STATE_DIR", str(tmp_path))
+
+    clear_jobs_for_tests()
+
+    job_id = add_job(["echo", "streaming"], gpus=1)
+    try_claim_job(job_id, [0])
+
+    log_path = job_log_path(job_id)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    with open(log_path, "w") as f:
+        f.write("line one\nline two\n")
+
+    def finish_after_delay():
+        time.sleep(0.15)
+        set_job_finished(job_id, "done", 0, "line one\nline two\n", "")
+
+    t = threading.Thread(target=finish_after_delay)
+    t.start()
+
+    result = CliRunner().invoke(cli_main, ["tail", job_id, "--follow"])
+    t.join()
+
+    assert result.exit_code == 0
+    assert "line one" in result.output
+    assert "line two" in result.output
+
+
+def test_job_output_written_to_log_file(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_NO_GPU", "1")
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setenv("RAVEL_STATE_DIR", str(tmp_path))
+
+    clear_jobs_for_tests()
+
+    class FakeProc:
+        def __init__(self, cmd, **kwargs):
+            self.pid = 12345
+            self._cmd = cmd
+            self._stdout_file = kwargs.get("stdout")
+            self.returncode = 0
+
+        def wait(self):
+            if hasattr(self._stdout_file, "write"):
+                self._stdout_file.write("job output line\n")
+            return 0
+
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: FakeProc(cmd, **kwargs))
+
+    job_id = add_job(["echo", "output-test"], gpus=1)
+    run_once(inline=True)
+
+    log_path = job_log_path(job_id)
+    assert os.path.exists(log_path)
+    with open(log_path) as f:
+        content = f.read()
+    assert "job output line" in content
+
+    job = get_job(job_id)
+    assert job["status"] == "done"
+    assert "job output line" in job["stdout"]
