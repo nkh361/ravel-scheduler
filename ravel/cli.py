@@ -7,7 +7,7 @@ import click
 
 from .daemon import daemon_running, daemon_status, start_daemon, stop_daemon
 from .scheduler import add_job, list_jobs
-from .store import get_job
+from .store import get_job, get_job_deps
 from .utils import console
 
 @click.group()
@@ -143,18 +143,29 @@ def stop(job_id: str):
 @click.argument("job_id")
 @click.option("--no-wait", is_flag=True, help="Enqueue and exit without waiting")
 def retry(job_id: str, no_wait: bool):
-    """Retry a job by ID (re-queues with same command and settings)"""
+    """Retry a failed or stopped job (re-queues with same command, settings, and dependencies)"""
     job = get_job(job_id)
     if not job:
         console.print("[red]Job not found.[/]")
         return
 
+    retryable = {"failed", "stopped"}
+    if job["status"] not in retryable:
+        console.print(
+            f"[yellow]Job {job_id} is not retryable (status={job['status']}). "
+            f"Only failed or stopped jobs can be retried.[/]"
+        )
+        return
+
+    deps = get_job_deps(job_id)
     new_job_id = add_job(
         job["command"],
         gpus=job.get("gpus", 1),
         priority=job.get("priority", 0),
+        depends_on=deps or None,
         memory_tag=job.get("memory_tag"),
         cwd=job.get("cwd"),
+        retried_from=job_id,
     )
 
     if not daemon_running():

@@ -61,7 +61,8 @@ def _init_db(conn: sqlite3.Connection) -> None:
             pid INTEGER,
             returncode INTEGER,
             stdout TEXT,
-            stderr TEXT
+            stderr TEXT,
+            retried_from TEXT
         );
         CREATE TABLE IF NOT EXISTS job_deps (
             job_id TEXT NOT NULL,
@@ -73,6 +74,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "jobs", "memory_tag", "TEXT")
     _ensure_column(conn, "jobs", "cwd", "TEXT")
     _ensure_column(conn, "jobs", "pid", "INTEGER")
+    _ensure_column(conn, "jobs", "retried_from", "TEXT")
     conn.executescript(
         """
         CREATE INDEX IF NOT EXISTS idx_jobs_status_created
@@ -128,6 +130,7 @@ def add_job(
     depends_on: Optional[List[str]] = None,
     memory_tag: Optional[str] = None,
     cwd: Optional[str] = None,
+    retried_from: Optional[str] = None,
 ) -> str:
     job_id = str(uuid.uuid4())[:8]
     created_at = datetime.now().isoformat(timespec="seconds")
@@ -135,8 +138,8 @@ def add_job(
         conn.execute(
             """
             INSERT INTO jobs (
-                id, command, gpus, priority, memory_tag, cwd, status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                id, command, gpus, priority, memory_tag, cwd, status, created_at, retried_from
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -147,6 +150,7 @@ def add_job(
                 cwd,
                 "queued",
                 created_at,
+                retried_from,
             ),
         )
         if depends_on:
@@ -171,6 +175,14 @@ def get_job(job_id: str) -> Optional[Dict]:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
     return _row_to_job(row) if row else None
+
+
+def get_job_deps(job_id: str) -> List[str]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT depends_on FROM job_deps WHERE job_id = ?", (job_id,)
+        ).fetchall()
+    return [row[0] for row in rows]
 
 
 def list_jobs(statuses: Optional[Iterable[str]] = None) -> List[Dict]:

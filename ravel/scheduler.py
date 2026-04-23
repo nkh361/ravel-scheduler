@@ -16,6 +16,7 @@ def add_job(
     depends_on: Optional[List[str]] = None,
     memory_tag: Optional[str] = None,
     cwd: Optional[str] = None,
+    retried_from: Optional[str] = None,
 ) -> str:
     job_id = _add_job(
         command,
@@ -24,6 +25,7 @@ def add_job(
         depends_on=depends_on,
         memory_tag=memory_tag,
         cwd=cwd,
+        retried_from=retried_from,
     )
     if not DASHBOARD_MODE:
         console.print(

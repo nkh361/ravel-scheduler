@@ -1,11 +1,15 @@
 import subprocess
 
+from click.testing import CliRunner
+
 from ravel.cli import _collect_submit_jobs, _parse_submit_line
+from ravel.cli import main as cli_main
 from ravel.daemon import run_once
 from ravel.store import (
     add_job,
     clear_jobs_for_tests,
     get_job,
+    get_job_deps,
     list_jobs,
     list_recent_jobs,
     mark_blocked_jobs_due_to_failed_deps,
@@ -204,3 +208,141 @@ def test_ravelfile_parsing_defaults_and_heredoc():
     parsed = _parse_submit_line(jobs[0], defaults["gpus"], defaults["priority"], None)
     assert parsed["name"] == "prep"
     assert parsed["after"] == ["seed"]
+
+
+def _make_fake_proc_factory(calls):
+    class FakeProc:
+        def __init__(self, cmd):
+            self.pid = 12345
+            self._cmd = cmd
+            self.returncode = 0
+
+        def communicate(self):
+            calls.append(self._cmd)
+            return "", ""
+
+    return lambda cmd, **kwargs: FakeProc(cmd)
+
+
+def test_retry_failed_job_queues_new_job(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setattr("ravel.cli.daemon_running", lambda: True)
+
+    clear_jobs_for_tests()
+
+    job_id = add_job(["echo", "hello"], gpus=2, priority=5, memory_tag="large")
+    set_job_finished(job_id, "failed", 1, "", "error")
+
+    result = CliRunner().invoke(cli_main, ["retry", job_id, "--no-wait"])
+
+    assert result.exit_code == 0
+    new_jobs = [j for j in list_jobs() if j["id"] != job_id]
+    assert len(new_jobs) == 1
+    new = new_jobs[0]
+    assert new["status"] == "queued"
+    assert new["command"] == ["echo", "hello"]
+    assert new["gpus"] == 2
+    assert new["priority"] == 5
+    assert new["memory_tag"] == "large"
+    assert new["retried_from"] == job_id
+
+
+def test_retry_stopped_job_queues_new_job(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setattr("ravel.cli.daemon_running", lambda: True)
+
+    clear_jobs_for_tests()
+
+    job_id = add_job(["echo", "stopped"], gpus=1)
+    set_job_finished(job_id, "stopped", -1, "", "terminated")
+
+    result = CliRunner().invoke(cli_main, ["retry", job_id, "--no-wait"])
+
+    assert result.exit_code == 0
+    new_jobs = [j for j in list_jobs() if j["id"] != job_id]
+    assert len(new_jobs) == 1
+    assert new_jobs[0]["status"] == "queued"
+    assert new_jobs[0]["retried_from"] == job_id
+
+
+def test_retry_non_retryable_status_does_not_create_job(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setattr("ravel.cli.daemon_running", lambda: True)
+
+    clear_jobs_for_tests()
+
+    for status, finish_args in [
+        ("queued", None),
+        ("done", (0, "ok", "")),
+    ]:
+        clear_jobs_for_tests()
+        job_id = add_job(["echo", "x"], gpus=1)
+        if finish_args is not None:
+            rc, stdout, stderr = finish_args
+            set_job_finished(job_id, status, rc, stdout, stderr)
+
+        result = CliRunner().invoke(cli_main, ["retry", job_id, "--no-wait"])
+
+        assert result.exit_code == 0
+        assert len(list_jobs()) == 1, f"Expected no new job for status={status}"
+
+
+def test_retry_nonexistent_job(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+
+    clear_jobs_for_tests()
+
+    result = CliRunner().invoke(cli_main, ["retry", "deadbeef", "--no-wait"])
+
+    assert result.exit_code == 0
+    assert list_jobs() == []
+
+
+def test_retry_preserves_dependencies(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setattr("ravel.cli.daemon_running", lambda: True)
+
+    clear_jobs_for_tests()
+
+    dep_id = add_job(["echo", "dep"], gpus=1)
+    job_id = add_job(["echo", "main"], gpus=1, depends_on=[dep_id])
+    set_job_finished(job_id, "failed", 1, "", "error")
+
+    result = CliRunner().invoke(cli_main, ["retry", job_id, "--no-wait"])
+
+    assert result.exit_code == 0
+    new_jobs = [j for j in list_jobs() if j["id"] not in {job_id, dep_id}]
+    assert len(new_jobs) == 1
+    assert dep_id in get_job_deps(new_jobs[0]["id"])
+
+
+def test_retry_job_executes_and_succeeds(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAVEL_NO_GPU", "1")
+    monkeypatch.setenv("RAVEL_TEST_MODE", "1")
+    monkeypatch.setenv("RAVEL_DB_PATH", str(tmp_path / "ravel.db"))
+    monkeypatch.setattr("ravel.cli.daemon_running", lambda: True)
+
+    clear_jobs_for_tests()
+
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", _make_fake_proc_factory(calls))
+
+    job_id = add_job(["echo", "retry-me"], gpus=1)
+    set_job_finished(job_id, "failed", 1, "", "simulated failure")
+
+    result = CliRunner().invoke(cli_main, ["retry", job_id, "--no-wait"])
+    assert result.exit_code == 0
+
+    run_once(inline=True)
+
+    new_jobs = [j for j in list_jobs() if j["id"] != job_id]
+    assert len(new_jobs) == 1
+    new = new_jobs[0]
+    assert new["status"] == "done"
+    assert new["retried_from"] == job_id
+    assert calls == [["echo", "retry-me"]]
